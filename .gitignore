@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+
+# electron-builder generated icon artifacts (keep build/icon.png)
+build/icon.icns
+build/icon.ico
+build/icons/
