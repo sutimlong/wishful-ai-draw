@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   CheckCircle2,
   Film,
   FolderOpen,
+  Keyboard,
   Layers,
   Loader2,
   Scissors,
@@ -11,13 +12,10 @@ import {
 } from 'lucide-react'
 import { VideoExtractProgress } from '@shared/types'
 import { useBatchStore } from '../store/useBatchStore'
-
-function formatSeconds(sec: number): string {
-  const safe = Math.max(0, sec)
-  const mins = Math.floor(safe / 60)
-  const secs = (safe % 60).toFixed(2)
-  return `${String(mins).padStart(2, '0')}:${ secs.padStart(5, '0') }`
-}
+import { FilmstripTimeline } from './video/FilmstripTimeline'
+import { VideoPreview } from './video/VideoPreview'
+import { formatTimecode } from './video/timeUtils'
+import { useVideoEditor } from './video/useVideoEditor'
 
 export const VideoTrimmer: React.FC = () => {
   const isVideoTrimmerOpen = useBatchStore((s) => s.isVideoTrimmerOpen)
@@ -26,18 +24,19 @@ export const VideoTrimmer: React.FC = () => {
   const openVideoDialog = useBatchStore((s) => s.openVideoDialog)
   const addTasks = useBatchStore((s) => s.addTasks)
 
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-
-  const [duration, setDuration] = useState<number>(10)
-  const [currentTime, setCurrentTime] = useState<number>(0)
-  const [startTime, setStartTime] = useState<number>(0)
-  const [endTime, setEndTime] = useState<number>(5)
-  const [fps, setFps] = useState<number>(8)
-
   const [isExtracting, setIsExtracting] = useState(false)
   const [progress, setProgress] = useState<VideoExtractProgress | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  const editor = useVideoEditor({
+    filePath: activeVideo?.filePath ?? null,
+    isOpen: isVideoTrimmerOpen,
+    shortcutsEnabled: isVideoTrimmerOpen && !isExtracting,
+    onEscape: () => {
+      if (!isExtracting) setVideoTrimmerOpen(false)
+    }
+  })
 
   useEffect(() => {
     if (!isVideoTrimmerOpen) return
@@ -52,37 +51,9 @@ export const VideoTrimmer: React.FC = () => {
     return () => unsub()
   }, [isVideoTrimmerOpen, activeVideo?.filePath])
 
-  if (!isVideoTrimmerOpen) return null
-
-  const handleLoadedMetadata = (): void => {
-    const vid = videoRef.current
-    if (!vid) return
-    const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 10
-    setDuration(Number(dur.toFixed(2)))
-    setStartTime(0)
-    setEndTime(Number(dur.toFixed(2)))
-  }
-
-  const handleStartTimeChange = (val: number): void => {
-    const clamped = Math.max(0, Math.min(val, endTime - 0.1))
-    const rounded = Number(clamped.toFixed(2))
-    setStartTime(rounded)
-    if (videoRef.current) {
-      videoRef.current.currentTime = rounded
-    }
-  }
-
-  const handleEndTimeChange = (val: number): void => {
-    const clamped = Math.min(duration, Math.max(val, startTime + 0.1))
-    const rounded = Number(clamped.toFixed(2))
-    setEndTime(rounded)
-    if (videoRef.current) {
-      videoRef.current.currentTime = rounded
-    }
-  }
-
-  const clipDuration = Math.max(0, endTime - startTime)
-  const estimatedFrames = clipDuration > 0 ? Math.max(1, Math.round(clipDuration * fps)) : 0
+  const { fps, setFps, startTime, endTime, clipDuration, duration } = editor
+  const estimatedFrames =
+    clipDuration > 0 && fps > 0 ? Math.max(1, Math.round(clipDuration * fps)) : 0
 
   const handleExtractAndQueue = async (): Promise<void> => {
     if (!activeVideo) return
@@ -91,6 +62,7 @@ export const VideoTrimmer: React.FC = () => {
       return
     }
 
+    editor.pause()
     setIsExtracting(true)
     setErrorMsg(null)
     setSuccessMsg(null)
@@ -125,13 +97,11 @@ export const VideoTrimmer: React.FC = () => {
     }
   }
 
-  const startPercent = duration > 0 ? Math.min(100, (startTime / duration) * 100) : 0
-  const endPercent = duration > 0 ? Math.min(100, (endTime / duration) * 100) : 100
+  if (!isVideoTrimmerOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
+      <div className="w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-indigo-600/20 border border-indigo-500/40 text-indigo-400">
@@ -139,10 +109,10 @@ export const VideoTrimmer: React.FC = () => {
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">
-                影片頭尾剪裁與 {fps} fps 序列圖擷取器 (Video Frame Extractor)
+                影片剪輯與 {fps} fps 序列圖擷取器 (Video Editor)
               </h2>
               <p className="text-[11px] text-zinc-400">
-                設定起訖秒數後，透過本地 FFmpeg 自動轉換為連續 PNG 並無縫推入 Fal.ai 批次佇列
+                拖曳時間軸 In/Out 把手設定範圍，透過本地 FFmpeg 轉成連續 PNG 並推入批次佇列
               </p>
             </div>
           </div>
@@ -151,7 +121,7 @@ export const VideoTrimmer: React.FC = () => {
             <button
               onClick={openVideoDialog}
               disabled={isExtracting}
-              className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium flex items-center gap-1.5 transition"
+              className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium flex items-center gap-1.5 transition disabled:opacity-50"
             >
               <FolderOpen className="w-3.5 h-3.5 text-indigo-400" />
               更換影片
@@ -159,15 +129,14 @@ export const VideoTrimmer: React.FC = () => {
             <button
               onClick={() => !isExtracting && setVideoTrimmerOpen(false)}
               disabled={isExtracting}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 disabled:opacity-50"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Body */}
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           {!activeVideo ? (
             <div className="p-12 border-2 border-dashed border-zinc-800 rounded-2xl text-center space-y-3">
               <Film className="w-10 h-10 text-indigo-400 mx-auto" />
@@ -181,130 +150,104 @@ export const VideoTrimmer: React.FC = () => {
             </div>
           ) : (
             <>
-              {/* Video Player Preview */}
-              <div className="rounded-xl bg-black border border-zinc-800 overflow-hidden relative aspect-video max-h-[320px] mx-auto flex items-center justify-center">
-                <video
-                  ref={videoRef}
-                  src={activeVideo.previewUrl}
-                  controls
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onTimeUpdate={() => {
-                    if (videoRef.current) {
-                      setCurrentTime(videoRef.current.currentTime)
-                    }
-                  }}
-                  className="max-h-[320px] w-full object-contain"
+              <VideoPreview
+                src={activeVideo.previewUrl}
+                fileName={activeVideo.fileName}
+                editor={editor}
+                disabled={isExtracting}
+              />
+
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+                <FilmstripTimeline
+                  duration={duration}
+                  currentTime={editor.currentTime}
+                  startTime={startTime}
+                  endTime={endTime}
+                  fps={fps}
+                  filmstrip={editor.filmstrip}
+                  isLoadingFilmstrip={editor.isLoadingFilmstrip}
+                  disabled={isExtracting}
+                  onSeek={editor.scrubTo}
+                  onChangeStart={editor.setStartTime}
+                  onChangeEnd={editor.setEndTime}
+                  onScrubStart={editor.beginScrub}
+                  onScrubEnd={editor.endScrub}
                 />
-                <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md bg-black/75 border border-zinc-700/80 text-[11px] font-mono text-zinc-200">
-                  {activeVideo.fileName}
-                </div>
-                <div className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-md bg-indigo-950/85 border border-indigo-500/40 text-[11px] font-mono text-indigo-200">
-                  目前播放：{formatSeconds(currentTime)} / {formatSeconds(duration)}
+
+                <div className="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-zinc-800/80">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={editor.markIn}
+                      disabled={isExtracting || duration <= 0}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-indigo-500/40 text-[11px] text-indigo-200 disabled:opacity-50"
+                    >
+                      設為起點 (I)
+                    </button>
+                    <button
+                      onClick={editor.markOut}
+                      disabled={isExtracting || duration <= 0}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-emerald-500/40 text-[11px] text-emerald-200 disabled:opacity-50"
+                    >
+                      設為終點 (O)
+                    </button>
+                    <button
+                      onClick={editor.goToIn}
+                      disabled={isExtracting || duration <= 0}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-300 disabled:opacity-50"
+                    >
+                      跳到起點 (Q)
+                    </button>
+                    <button
+                      onClick={editor.goToOut}
+                      disabled={isExtracting || duration <= 0}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-300 disabled:opacity-50"
+                    >
+                      跳到終點 (W)
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 flex items-center gap-1.5">
+                    <Keyboard className="w-3.5 h-3.5" />
+                    Space 播放 · J/K/L 穿梭 · ←→ 逐格 · Shift+←→ ±1 秒 · ↑↓ In/Out
+                  </div>
                 </div>
               </div>
 
-              {/* Dual Range Slider Timeline */}
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-4">
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
                     <Scissors className="w-3.5 h-3.5 text-indigo-400" />
-                    剪裁時間區間設定 (Dual Range Trimmer)
+                    剪裁參數與輸出設定
                   </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleStartTimeChange(currentTime)}
-                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-300"
-                    >
-                      設目前位置為起點
-                    </button>
-                    <button
-                      onClick={() => handleEndTimeChange(currentTime)}
-                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-300"
-                    >
-                      設目前位置為終點
-                    </button>
-                  </div>
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    選取長度 {formatTimecode(clipDuration, fps)}
+                  </span>
                 </div>
 
-                {/* Visual Range Track + Dual Sliders */}
-                <div className="space-y-2">
-                  <div className="relative h-3 rounded-full bg-zinc-900 border border-zinc-800 overflow-hidden">
-                    <div
-                      className="absolute inset-y-0 bg-gradient-to-r from-indigo-600/80 to-emerald-500/80"
-                      style={{
-                        left: `${startPercent}%`,
-                        width: `${Math.max(1, endPercent - startPercent)}%`
-                      }}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 pt-1">
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-zinc-400">起點滑桿 (Start)</span>
-                        <span className="font-mono text-indigo-400">
-                          {formatSeconds(startTime)}
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={duration}
-                        step={0.05}
-                        value={startTime}
-                        disabled={isExtracting}
-                        onChange={(e) => handleStartTimeChange(parseFloat(e.target.value))}
-                        className="w-full accent-indigo-500 cursor-pointer"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-zinc-400">終點滑桿 (End)</span>
-                        <span className="font-mono text-emerald-400">
-                          {formatSeconds(endTime)}
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={duration}
-                        step={0.05}
-                        value={endTime}
-                        disabled={isExtracting}
-                        onChange={(e) => handleEndTimeChange(parseFloat(e.target.value))}
-                        className="w-full accent-emerald-500 cursor-pointer"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Numeric Inputs & FPS & Estimated Frames */}
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-zinc-800/80 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
                   <div className="space-y-1">
-                    <label className="text-[11px] text-zinc-400">Start Time (秒)</label>
+                    <label className="text-[11px] text-zinc-400">起點 In (秒)</label>
                     <input
                       type="number"
                       min={0}
                       max={endTime}
-                      step={0.1}
+                      step={fps > 0 ? 1 / fps : 0.1}
                       value={startTime}
                       disabled={isExtracting}
-                      onChange={(e) => handleStartTimeChange(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => editor.setStartTime(parseFloat(e.target.value) || 0)}
                       className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-mono text-zinc-100"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-zinc-400">End Time (秒)</label>
+                    <label className="text-[11px] text-zinc-400">終點 Out (秒)</label>
                     <input
                       type="number"
                       min={startTime}
                       max={duration}
-                      step={0.1}
+                      step={fps > 0 ? 1 / fps : 0.1}
                       value={endTime}
                       disabled={isExtracting}
-                      onChange={(e) => handleEndTimeChange(parseFloat(e.target.value) || 0)}
+                      onChange={(e) => editor.setEndTime(parseFloat(e.target.value) || 0)}
                       className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-mono text-zinc-100"
                     />
                   </div>
@@ -317,11 +260,11 @@ export const VideoTrimmer: React.FC = () => {
                       onChange={(e) => setFps(parseInt(e.target.value, 10))}
                       className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-mono text-zinc-100"
                     >
-                      <option value={4}>4 fps</option>
-                      <option value={8}>8 fps (預設)</option>
-                      <option value={12}>12 fps</option>
-                      <option value={16}>16 fps</option>
-                      <option value={24}>24 fps</option>
+                      {[4, 8, 12, 16, 24].map((option) => (
+                        <option key={option} value={option}>
+                          {option} fps{option === 8 ? ' (預設)' : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -331,13 +274,19 @@ export const VideoTrimmer: React.FC = () => {
                       預估擷取張數 ({clipDuration.toFixed(1)}s × {fps})
                     </span>
                     <span className="text-base font-bold font-mono text-white">
-                      {estimatedFrames} <span className="text-xs font-normal text-indigo-300">張 PNG</span>
+                      {estimatedFrames}{' '}
+                      <span className="text-xs font-normal text-indigo-300">張 PNG</span>
                     </span>
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono pt-1 border-t border-zinc-800/80">
+                  <span>In {formatTimecode(startTime, fps)}</span>
+                  <span>Duration {formatTimecode(clipDuration, fps)}</span>
+                  <span>Out {formatTimecode(endTime, fps)}</span>
+                </div>
               </div>
 
-              {/* FFmpeg Real-time Progress Bar */}
               {(isExtracting || progress) && (
                 <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-2">
                   <div className="flex items-center justify-between text-xs">
@@ -374,12 +323,12 @@ export const VideoTrimmer: React.FC = () => {
                   {successMsg}
                 </div>
               )}
+
             </>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 bg-zinc-950/80 border-t border-zinc-800 flex items-center justify-between">
+        <div className="px-6 py-4 bg-zinc-950/80 border-t border-zinc-800 flex items-center justify-between gap-3">
           <div className="text-[11px] text-zinc-500">
             擷取完成的序列影像將自動加入待處理佇列，並可直接於 Node 工作流監控
           </div>
@@ -387,9 +336,9 @@ export const VideoTrimmer: React.FC = () => {
             <button
               onClick={() => setVideoTrimmerOpen(false)}
               disabled={isExtracting}
-              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium"
+              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium disabled:opacity-50"
             >
-              關閉
+              關閉 (Esc)
             </button>
             <button
               onClick={handleExtractAndQueue}
@@ -410,8 +359,8 @@ export const VideoTrimmer: React.FC = () => {
             </button>
           </div>
         </div>
+
       </div>
     </div>
   )
 }
-

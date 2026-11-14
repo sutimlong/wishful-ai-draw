@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { BatchItem, BatchQueueStatus, GenerationConfig } from '../../shared/types'
 import { getSettingsStore } from '../services/store'
 import { BatchQueueEngine } from '../services/batchQueueEngine'
+import { usageLogger } from '../services/usageLoggerWiring'
 
 let engineInstance: BatchQueueEngine | null = null
 
@@ -23,7 +24,8 @@ export function getBatchQueueEngine(): BatchQueueEngine {
       },
       onQueueStatusChanged: (status: BatchQueueStatus) => {
         broadcastToWindows(IPC_CHANNELS.EVENT_BATCH_QUEUE_STATUS, status)
-      }
+      },
+      usageRecorder: usageLogger
     })
   }
   return engineInstance

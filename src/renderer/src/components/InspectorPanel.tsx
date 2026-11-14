@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import {
   Columns,
   ExternalLink,
@@ -20,6 +20,38 @@ export const InspectorPanel: React.FC = () => {
 
   const [compareMode, setCompareMode] = useState<'slider' | 'side-by-side'>('slider')
   const [sliderPos, setSliderPos] = useState(50)
+  const [isDragging, setIsDragging] = useState(false)
+  const compareAreaRef = useRef<HTMLDivElement>(null)
+
+  /** 依滑鼠 / 觸控的 X 座標更新分割位置 (0~100) */
+  const updateSliderFromClientX = (clientX: number): void => {
+    const el = compareAreaRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width === 0) return
+    const pct = ((clientX - rect.left) / rect.width) * 100
+    setSliderPos(Math.min(100, Math.max(0, pct)))
+  }
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    e.preventDefault()
+    setIsDragging(true)
+    e.currentTarget.setPointerCapture(e.pointerId)
+    updateSliderFromClientX(e.clientX)
+  }
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!isDragging) return
+    updateSliderFromClientX(e.clientX)
+  }
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!isDragging) return
+    setIsDragging(false)
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+  }
 
   const item = items.find((i) => i.id === selectedItemId)
 
@@ -94,7 +126,16 @@ export const InspectorPanel: React.FC = () => {
             </div>
           ) : compareMode === 'slider' ? (
             <div className="space-y-2">
-              <div className="relative aspect-square rounded-xl bg-zinc-950 border border-zinc-800 overflow-hidden select-none">
+              <div
+                ref={compareAreaRef}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                className={`group relative aspect-square rounded-xl bg-zinc-950 border border-zinc-800 overflow-hidden select-none touch-none cursor-ew-resize ${
+                  isDragging ? 'ring-1 ring-indigo-500/60' : ''
+                }`}
+              >
                 {/* After (AI Result) as full base layer */}
                 <img
                   src={outputUrl}
@@ -119,7 +160,7 @@ export const InspectorPanel: React.FC = () => {
                   className="absolute inset-y-0 w-0.5 bg-white shadow-[0_0_8px_rgba(0,0,0,0.8)] pointer-events-none"
                   style={{ left: `${sliderPos}%` }}
                 >
-                  <div className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-indigo-600 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold shadow">
+                  <div className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-indigo-600 border-2 border-white flex items-center justify-center text-[11px] text-white font-bold shadow transition-transform group-hover:scale-110">
                     ↔
                   </div>
                 </div>
@@ -230,7 +271,7 @@ export const InspectorPanel: React.FC = () => {
                 {item.apiCostIsEstimated ? '~' : ''}
                 {formatUsd(item.apiCostUsd)}
                 <span className="ml-1 text-[10px] text-zinc-500">
-                  {item.apiCostIsEstimated ? '(預估單價)' : '(實際扣款)'}
+                  {item.apiCostIsEstimated ? '(預估費用)' : '(實際扣款)'}
                 </span>
               </span>
             </div>

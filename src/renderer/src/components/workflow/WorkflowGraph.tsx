@@ -16,10 +16,12 @@ import { InputNode } from './nodes/InputNode'
 import { PreProcessNode } from './nodes/PreProcessNode'
 import { FalApiNode } from './nodes/FalApiNode'
 import { UpscaleNode } from './nodes/UpscaleNode'
+import { FeatureNode } from './nodes/FeatureNode'
 import { OutputNode } from './nodes/OutputNode'
 import {
   deriveWorkflowStageStates,
   FalApiNodeData,
+  FeatureNodeData,
   getEffectivePrompt,
   InputNodeData,
   OutputNodeData,
@@ -33,6 +35,9 @@ const nodeTypes = {
   preProcessNode: PreProcessNode,
   falApiNode: FalApiNode,
   upscaleNode: UpscaleNode,
+  backgroundRemovalNode: FeatureNode,
+  resizeNode: FeatureNode,
+  faceRestoreNode: FeatureNode,
   outputNode: OutputNode
 }
 
@@ -47,7 +52,6 @@ const initialNodePositions: Record<string, { x: number; y: number }> = {
   'node-input': { x: 40, y: 120 },
   'node-preprocess': { x: 360, y: 120 },
   'node-fal': { x: 680, y: 85 },
-  'node-upscale': { x: 1020, y: 120 },
   'node-output': { x: 1060, y: 120 }
 }
 
@@ -71,11 +75,10 @@ export const WorkflowGraph: React.FC = () => {
 
   const stageStates = useMemo(() => deriveWorkflowStageStates(activeItem), [activeItem])
 
-  const upscaleEnabled = generationConfig.upscaleEnabled
-  // 放大節點狀態：以 engine 寫入的 upscaleStatus 為準（實際放大管線）
-  const upscaleStatus: WorkflowNodeStatus = (() => {
-    if (!activeItem) return 'pending'
-    switch (activeItem.upscaleStatus) {
+  const featureStatus = (
+    status?: 'pending' | 'processing' | 'completed' | 'failed'
+  ): WorkflowNodeStatus => {
+    switch (status) {
       case 'processing':
         return 'active'
       case 'completed':
@@ -85,7 +88,12 @@ export const WorkflowGraph: React.FC = () => {
       default:
         return 'pending'
     }
-  })()
+  }
+
+  const upscaleStatus = featureStatus(activeItem?.upscaleStatus)
+  const backgroundRemovalStatus = featureStatus(activeItem?.backgroundRemovalStatus)
+  const resizeStatus = featureStatus(activeItem?.resizeStatus)
+  const faceRestoreStatus = featureStatus(activeItem?.faceRestoreStatus)
 
   const computedNodes: Node[] = useMemo(() => {
     const inputData: InputNodeData = {
@@ -140,15 +148,69 @@ export const WorkflowGraph: React.FC = () => {
       savedFilePath: activeItem?.savedFilePath,
       outputFormat: generationConfig.outputFormat,
       durationSec,
-      stepNumber: upscaleEnabled ? 5 : 4,
       errorMessage: stageStates.outputStatus === 'error' ? activeItem?.errorMessage : undefined
     }
 
     const upscaleData: UpscaleNodeData = {
       status: upscaleStatus,
       title: 'Upscale',
-      factor: generationConfig.upscaleFactor
+      factor: generationConfig.upscale.factor
     }
+
+    const backgroundRemovalData: FeatureNodeData = {
+      status: backgroundRemovalStatus,
+      title: '去背 (Background Removal)',
+      stepNumber: 0,
+      subtitle: 'BiRefNet 背景移除',
+      detail: `模型：${generationConfig.backgroundRemoval.model}\n解析度：${generationConfig.backgroundRemoval.operatingResolution}`
+    }
+
+    const resizeData: FeatureNodeData = {
+      status: resizeStatus,
+      title: '縮放 (Resize)',
+      stepNumber: 0,
+      subtitle: '圖像尺寸調整',
+      detail: `目標尺寸：${generationConfig.resize.width}×${generationConfig.resize.height}\n模式：${generationConfig.resize.fit}`
+    }
+
+    const faceRestoreData: FeatureNodeData = {
+      status: faceRestoreStatus,
+      title: '臉部修復 (Face Restore)',
+      stepNumber: 0,
+      subtitle: 'CodeFormer 臉部修復',
+      detail: `保真度：${generationConfig.faceRestore.fidelity.toFixed(2)}\n放大：${generationConfig.faceRestore.upscaleFactor}x`
+    }
+
+    const featureSteps: {
+      id: string
+      type: string
+      data: UpscaleNodeData | FeatureNodeData
+    }[] = []
+
+    if (generationConfig.upscale.enabled) {
+      featureSteps.push({ id: 'node-upscale', type: 'upscaleNode', data: upscaleData })
+    }
+    if (generationConfig.backgroundRemoval.enabled) {
+      featureSteps.push({
+        id: 'node-bg-removal',
+        type: 'backgroundRemovalNode',
+        data: backgroundRemovalData
+      })
+    }
+    if (generationConfig.resize.enabled) {
+      featureSteps.push({ id: 'node-resize', type: 'resizeNode', data: resizeData })
+    }
+    if (generationConfig.faceRestore.enabled) {
+      featureSteps.push({
+        id: 'node-face-restore',
+        type: 'faceRestoreNode',
+        data: faceRestoreData
+      })
+    }
+
+    featureSteps.forEach((step, idx) => {
+      ;(step.data as { stepNumber?: number }).stepNumber = 4 + idx
+    })
 
     const nodes: Node[] = [
       {
@@ -171,27 +233,35 @@ export const WorkflowGraph: React.FC = () => {
       }
     ]
 
-    if (upscaleEnabled) {
+    let featureX = 1020
+    for (const step of featureSteps) {
       nodes.push({
-        id: 'node-upscale',
-        type: 'upscaleNode',
-        position: initialNodePositions['node-upscale'],
-        data: upscaleData
+        id: step.id,
+        type: step.type,
+        position: { x: featureX, y: 120 },
+        data: step.data
       })
+      featureX += 300
     }
 
+    const outputX = featureSteps.length > 0 ? featureX : initialNodePositions['node-output'].x
     nodes.push({
       id: 'node-output',
       type: 'outputNode',
-      position: {
-        x: upscaleEnabled ? 1300 : initialNodePositions['node-output'].x,
-        y: initialNodePositions['node-output'].y
-      },
-      data: outputData
+      position: { x: outputX, y: initialNodePositions['node-output'].y },
+      data: { ...outputData, stepNumber: 4 + featureSteps.length }
     })
 
     return nodes
-  }, [activeItem, generationConfig, stageStates, upscaleEnabled, upscaleStatus])
+  }, [
+    activeItem,
+    generationConfig,
+    stageStates,
+    upscaleStatus,
+    backgroundRemovalStatus,
+    resizeStatus,
+    faceRestoreStatus
+  ])
 
   const computedEdges: Edge[] = useMemo(() => {
     const e1Color = getEdgeStrokeColor(
@@ -206,7 +276,6 @@ export const WorkflowGraph: React.FC = () => {
       stageStates.falApiStatus,
       stageStates.edgeFalToOutputAnimated
     )
-    const upscaleEdgeColor = getEdgeStrokeColor(upscaleStatus, false)
 
     const edges: Edge[] = [
       {
@@ -239,50 +308,61 @@ export const WorkflowGraph: React.FC = () => {
       }
     ]
 
-    if (upscaleEnabled) {
+    const mkEdge = (
+      source: string,
+      target: string,
+      label: string,
+      color: string,
+      animated: boolean
+    ): Edge => ({
+      id: `e-${source}-${target}`,
+      source,
+      target,
+      animated,
+      label,
+      labelStyle: { fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' },
+      labelBgStyle: { fill: '#18181b', fillOpacity: 0.85 },
+      style: { stroke: color, strokeWidth: animated ? 3 : 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color }
+    })
+
+    const featureChain: { id: string; status: WorkflowNodeStatus }[] = []
+    if (generationConfig.upscale.enabled) featureChain.push({ id: 'node-upscale', status: upscaleStatus })
+    if (generationConfig.backgroundRemoval.enabled)
+      featureChain.push({ id: 'node-bg-removal', status: backgroundRemovalStatus })
+    if (generationConfig.resize.enabled) featureChain.push({ id: 'node-resize', status: resizeStatus })
+    if (generationConfig.faceRestore.enabled)
+      featureChain.push({ id: 'node-face-restore', status: faceRestoreStatus })
+
+    if (featureChain.length === 0) {
       edges.push(
-        {
-          id: 'e-fal-upscale',
-          source: 'node-fal',
-          target: 'node-upscale',
-          animated: false,
-          label: 'Generated Image',
-          labelStyle: { fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' },
-          labelBgStyle: { fill: '#18181b', fillOpacity: 0.85 },
-          style: { stroke: e3Color, strokeWidth: 2 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: e3Color }
-        },
-        {
-          id: 'e-upscale-output',
-          source: 'node-upscale',
-          target: 'node-output',
-          animated: false,
-          label: `${generationConfig.upscaleFactor}x 放大`,
-          labelStyle: { fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' },
-          labelBgStyle: { fill: '#18181b', fillOpacity: 0.85 },
-          style: { stroke: upscaleEdgeColor, strokeWidth: 2 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: upscaleEdgeColor }
-        }
+        mkEdge(
+          'node-fal',
+          'node-output',
+          stageStates.edgeFalToOutputAnimated ? '寫入本地磁碟...' : 'Generated Image',
+          e3Color,
+          stageStates.edgeFalToOutputAnimated
+        )
       )
     } else {
-      edges.push({
-        id: 'e-fal-output',
-        source: 'node-fal',
-        target: 'node-output',
-        animated: stageStates.edgeFalToOutputAnimated,
-        label: stageStates.edgeFalToOutputAnimated ? '寫入本地磁碟...' : 'Generated Image',
-        labelStyle: { fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' },
-        labelBgStyle: { fill: '#18181b', fillOpacity: 0.85 },
-        style: {
-          stroke: e3Color,
-          strokeWidth: stageStates.edgeFalToOutputAnimated ? 3 : 2
-        },
-        markerEnd: { type: MarkerType.ArrowClosed, color: e3Color }
-      })
+      edges.push(mkEdge('node-fal', featureChain[0].id, 'Generated Image', e3Color, false))
+      for (let i = 0; i < featureChain.length; i++) {
+        const target = i + 1 < featureChain.length ? featureChain[i + 1].id : 'node-output'
+        const isLast = i === featureChain.length - 1
+        const color = getEdgeStrokeColor(featureChain[i].status, false)
+        edges.push(mkEdge(featureChain[i].id, target, isLast ? '最終結果' : '處理結果', color, false))
+      }
     }
 
     return edges
-  }, [stageStates, upscaleEnabled, upscaleStatus, generationConfig.upscaleFactor])
+  }, [
+    stageStates,
+    generationConfig,
+    upscaleStatus,
+    backgroundRemovalStatus,
+    resizeStatus,
+    faceRestoreStatus
+  ])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(computedNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(computedEdges)

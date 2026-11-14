@@ -26,8 +26,10 @@ const baseConfig: GenerationConfig = {
   outputFormat: 'png',
   seed: 42,
   customJsonParams: '',
-  upscaleEnabled: false,
-  upscaleFactor: 2
+  upscale: { enabled: false, factor: 2, creativity: 0.35, resemblance: 0.6, guidanceScale: 4, numInferenceSteps: 18 },
+  backgroundRemoval: { enabled: false, model: 'General Use (Light)', operatingResolution: '1024x1024', refineForeground: true, outputFormat: 'png' },
+  resize: { enabled: false, width: 1024, height: 1024, fit: 'contain', outputFormat: 'png' },
+  faceRestore: { enabled: false, fidelity: 0.5, upscaleFactor: 2, faceUpscale: true, aligned: false, onlyCenterFace: false }
 }
 
 describe('falPayloadBuilder', () => {
@@ -138,6 +140,52 @@ describe('falPayloadBuilder', () => {
     expect(flare?.includeDiffusionParams).toBe(false)
     expect(flare?.imageInputField).toBe('image_urls')
     expect(flare?.isArrayImageInput).toBe(true)
+  })
+
+  it('drops parameters the selected model schema does not support', () => {
+    const strictConfig: GenerationConfig = {
+      ...baseConfig,
+      endpointId: 'fal-ai/aura-sr',
+      imageInputField: 'image_url',
+      isArrayImageInput: false,
+      includeDiffusionParams: true,
+      unsupportedFields: [
+        'prompt',
+        'output_format',
+        'strength',
+        'num_inference_steps',
+        'guidance_scale',
+        'negative_prompt',
+        'seed'
+      ]
+    }
+
+    const payload = buildFalInputPayload(
+      baseItem,
+      strictConfig,
+      'https://fal.media/files/uploaded.png'
+    )
+
+    expect(payload).toEqual({ image_url: 'https://fal.media/files/uploaded.png' })
+  })
+
+  it('lets advanced JSON params override schema-level filtering', () => {
+    const strictConfig: GenerationConfig = {
+      ...baseConfig,
+      endpointId: 'fal-ai/aura-sr',
+      includeDiffusionParams: true,
+      unsupportedFields: ['strength'],
+      customJsonParams: '{"strength": 0.4}'
+    }
+
+    const payload = buildFalInputPayload(
+      baseItem,
+      strictConfig,
+      'https://fal.media/files/uploaded.png'
+    )
+
+    expect(payload.strength).toBe(0.4)
+    expect(payload.image_url).toBe('https://fal.media/files/uploaded.png')
   })
 
   it('extracts output image URL across different fal.ai response structures', () => {

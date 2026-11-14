@@ -238,7 +238,7 @@ export const BatchGridCard: React.FC<Props> = ({ item }) => {
                 <span
                   title={
                     item.apiCostIsEstimated
-                      ? `fal.ai 預估費用（${item.apiCostCurrency ?? 'USD'}）：API Key 無帳務權限或帳務尚未入帳時以單價估算`
+                      ? `fal.ai 預估費用（${item.apiCostCurrency ?? 'USD'}）：API Key 無帳務權限或帳務尚未入帳時以歷史均價估算`
                       : `fal.ai 實際扣款金額（${item.apiCostCurrency ?? 'USD'}）`
                   }
                   className={`px-1.5 py-0.5 rounded font-mono ${

@@ -30,6 +30,8 @@ function makeItem(id: string, status: TaskStatus = 'idle'): BatchItem {
 const BASE_SETTINGS: AppSettings = {
   falApiKey: 'fal_sk_test_key',
   hasApiKey: true,
+  deepseekApiKey: 'sk-deepseek-test',
+  hasDeepseekApiKey: true,
   outputDirectory: '/Users/me/Pictures/Wishful_AI_Output',
   concurrency: 2,
   autoSaveOutput: true,
@@ -47,8 +49,10 @@ const GENERATION_CONFIG: GenerationConfig = {
   numInferenceSteps: 28,
   guidanceScale: 3.5,
   outputFormat: 'png',
-  upscaleEnabled: false,
-  upscaleFactor: 2
+  upscale: { enabled: false, factor: 2, creativity: 0.35, resemblance: 0.6, guidanceScale: 4, numInferenceSteps: 18 },
+  backgroundRemoval: { enabled: false, model: 'General Use (Light)', operatingResolution: '1024x1024', refineForeground: true, outputFormat: 'png' },
+  resize: { enabled: false, width: 1024, height: 1024, fit: 'contain', outputFormat: 'png' },
+  faceRestore: { enabled: false, fidelity: 0.5, upscaleFactor: 2, faceUpscale: true, aligned: false, onlyCenterFace: false }
 }
 
 async function loadStore(items: BatchItem[]) {

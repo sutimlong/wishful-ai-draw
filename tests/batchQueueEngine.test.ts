@@ -10,6 +10,8 @@ import {
 const mockSettings: AppSettings = {
   falApiKey: 'test-key-1234567890',
   hasApiKey: true,
+  deepseekApiKey: 'sk-deepseek-test',
+  hasDeepseekApiKey: true,
   outputDirectory: '/tmp/out',
   concurrency: 2,
   autoSaveOutput: false,
@@ -26,8 +28,10 @@ const mockConfig: GenerationConfig = {
   numInferenceSteps: 20,
   guidanceScale: 3.5,
   outputFormat: 'png',
-  upscaleEnabled: false,
-  upscaleFactor: 2
+  upscale: { enabled: false, factor: 2, creativity: 0.35, resemblance: 0.6, guidanceScale: 4, numInferenceSteps: 18 },
+  backgroundRemoval: { enabled: false, model: 'General Use (Light)', operatingResolution: '1024x1024', refineForeground: true, outputFormat: 'png' },
+  resize: { enabled: false, width: 1024, height: 1024, fit: 'contain', outputFormat: 'png' },
+  faceRestore: { enabled: false, fidelity: 0.5, upscaleFactor: 2, faceUpscale: true, aligned: false, onlyCenterFace: false }
 }
 
 function createItems(count: number): BatchItem[] {
@@ -282,4 +286,60 @@ describe('BatchQueueEngine', () => {
     expect(startedGenerationIds).toEqual(['task-2'])
   })
 })
+
+  it('模擬模式完成後仍寫入使用記錄，並標記為模擬事件', async () => {
+    const recorded: Array<{ itemId: string; isSimulation?: boolean }> = []
+
+    await new Promise<void>((resolve) => {
+      const engine = new BatchQueueEngine({
+        // mockSettings 預設 mockMode: true
+        getSettings: () => ({ ...mockSettings, concurrency: 1 }),
+        onItemUpdated: (item) => {
+          if (item.status === 'completed') resolve()
+        },
+        onQueueStatusChanged: () => {},
+        usageRecorder: {
+          recordImageGenerated: (item, _config, options) => {
+            recorded.push({ itemId: item.id, isSimulation: options?.isSimulation })
+          },
+          recordCostResolved: () => {}
+        }
+      })
+
+      engine.startBatch(createItems(1), mockConfig)
+    })
+
+    expect(recorded).toEqual([{ itemId: 'task-1', isSimulation: true }])
+  })
+
+  it('正式模式的記錄事件不標記為模擬', async () => {
+    const recorded: Array<{ isSimulation?: boolean }> = []
+
+    await new Promise<void>((resolve) => {
+      const engine = new BatchQueueEngine({
+        getSettings: () => ({ ...mockSettings, mockMode: false, concurrency: 1 }),
+        onItemUpdated: (item) => {
+          if (item.status === 'completed') resolve()
+        },
+        onQueueStatusChanged: () => {},
+        customUploader: async (item) => `https://fal.media/${item.id}.png`,
+        customRunner: async (item) => ({
+          remoteInputUrl: `https://fal.media/${item.id}.png`,
+          outputImageUrl: `https://fal.media/out-${item.id}.png`
+        }),
+        costResolver: async () => null,
+        usageRecorder: {
+          recordImageGenerated: (_item, _config, options) => {
+            recorded.push({ isSimulation: options?.isSimulation })
+          },
+          recordCostResolved: () => {}
+        }
+      })
+
+      engine.startBatch(createItems(1), mockConfig)
+    })
+
+    expect(recorded).toEqual([{ isSimulation: false }])
+  })
+
 

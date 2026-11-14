@@ -68,6 +68,21 @@ export function registerFileIpc(): void {
     return result.filePaths.map(createBatchItemFromPath)
   })
 
+  // 選擇單張參考圖（文字生成圖片頁面使用）
+  ipcMain.handle(IPC_CHANNELS.FILE_SELECT_REFERENCE_IMAGE, async () => {
+    const result = await dialog.showOpenDialog({
+      title: '選擇參考圖',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    return createBatchItemFromPath(result.filePaths[0])
+  })
+
   ipcMain.handle(IPC_CHANNELS.FILE_SELECT_FOLDER, async () => {
     const result = await dialog.showOpenDialog({
       title: '選擇包含圖片的資料夾',

@@ -48,6 +48,13 @@ export interface UpscaleNodeData extends BaseWorkflowNodeData {
   factor: number
 }
 
+/** 通用後處理功能節點（去背 / 縮放 / 臉部修復共用） */
+export interface FeatureNodeData extends BaseWorkflowNodeData {
+  stepNumber: number
+  subtitle: string
+  detail: string
+}
+
 export function getNodeStatusStyles(status: WorkflowNodeStatus): {
   border: string
   badgeBg: string

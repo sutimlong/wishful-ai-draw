@@ -33,6 +33,28 @@ export function buildFalInputPayload(
     if (typeof config.seed === 'number' && !Number.isNaN(config.seed)) {
       payload.seed = config.seed
     }
+
+    if (config.scheduler && config.scheduler.trim().length > 0) {
+      payload.scheduler = config.scheduler.trim()
+    }
+  } else {
+    // OpenAI GPT Image 系列的原生參數
+    if (config.quality) payload.quality = config.quality
+    if (config.imageSize && config.imageSize.trim()) payload.image_size = config.imageSize.trim()
+    if (typeof config.numImages === 'number' && !Number.isNaN(config.numImages)) {
+      payload.num_images = config.numImages
+    }
+    if (config.safetyTolerance && config.safetyTolerance.trim()) {
+      payload.safety_tolerance = config.safetyTolerance.trim()
+    }
+  }
+
+  // 依模型 schema 剔除不支援的參數（由 fal.ai 目錄同步而來，避免 422 驗證錯誤）
+  if (config.unsupportedFields && config.unsupportedFields.length > 0) {
+    const blocked = new Set(config.unsupportedFields)
+    Object.keys(payload).forEach((key) => {
+      if (blocked.has(key)) delete payload[key]
+    })
   }
 
   if (config.customJsonParams && config.customJsonParams.trim().length > 0) {

@@ -1,12 +1,15 @@
-import { app, shell, BrowserWindow, protocol, net, nativeImage, screen } from 'electron'
+import { app, shell, BrowserWindow, protocol, nativeImage, screen } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerConfigIpc } from './ipc/config.ipc'
 import { registerFileIpc } from './ipc/file.ipc'
 import { registerBatchIpc } from './ipc/batch.ipc'
 import { registerVideoIpc } from './ipc/video.ipc'
+import { registerAuthIpc } from './ipc/auth.ipc'
+import { registerPromptIpc } from './ipc/prompt.ipc'
+import { registerTextToImageIpc, ensureTextToImageDirectories } from './ipc/textToImage.ipc'
+import { registerLocalMediaProtocol } from './services/localMediaProtocol'
 
 /** 取得應用程式圖示路徑（支援開發者模式 npm run dev / preview 與正式打包環境） */
 function getAppIconPath(): string | undefined {
@@ -92,42 +95,10 @@ app.whenReady().then(() => {
   }
 
   // Handle local-media://image?path=/absolute/path/to/file.png(&thumb=1)
-  protocol.handle('local-media', async (request) => {
-    try {
-      const url = new URL(request.url)
-      const filePath = url.searchParams.get('path')
-      const isThumb = url.searchParams.get('thumb') === '1'
-      if (!filePath) {
-        return new Response('Missing path parameter', { status: 400 })
-      }
+  registerLocalMediaProtocol()
 
-      if (isThumb) {
-        try {
-          const thumb = await nativeImage.createThumbnailFromPath(filePath, {
-            width: 360,
-            height: 360
-          })
-          if (!thumb.isEmpty()) {
-            const jpegBuffer = thumb.toJPEG(82)
-            return new Response(new Uint8Array(jpegBuffer), {
-              headers: {
-                'Content-Type': 'image/jpeg',
-                'Cache-Control': 'public, max-age=3600'
-              }
-            })
-          }
-        } catch {
-          // Fallback to full image fetch if OS thumbnail generation fails
-        }
-      }
-
-      const fileUrl = pathToFileURL(filePath).toString()
-      return net.fetch(fileUrl)
-    } catch (err) {
-      console.error('Protocol local-media error:', err)
-      return new Response('Failed to load local file', { status: 500 })
-    }
-  })
+  // 每次啟動都確保「圖片 / Wishful_Ai_Draw / 文生圖」資料夾結構存在
+  ensureTextToImageDirectories()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -138,6 +109,9 @@ app.whenReady().then(() => {
   registerFileIpc()
   registerBatchIpc()
   registerVideoIpc()
+  registerAuthIpc()
+  registerPromptIpc()
+  registerTextToImageIpc()
 
   createWindow()
 

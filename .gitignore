@@ -20,3 +20,7 @@ npm-debug.log*
 build/icon.icns
 build/icon.ico
 build/icons/
+
+# Google 憑證（含 Service Account 私鑰與 OAuth Client，切勿提交）
+resources/google-credentials.json
+resources/google-service-account.json

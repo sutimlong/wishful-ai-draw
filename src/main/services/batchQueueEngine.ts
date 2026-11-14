@@ -2,12 +2,21 @@ import {
   AppSettings,
   BatchItem,
   BatchQueueStatus,
+  FeatureStatus,
   GenerationConfig,
-  UpscaleStatus
+  UsageCostInfo
 } from '../../shared/types'
-import { falService, UPSCALE_ENDPOINT_ID } from './falService'
+import { clampConcurrency } from '../../shared/concurrency'
+import {
+  falService,
+  UPSCALE_ENDPOINT_ID,
+  BACKGROUND_REMOVAL_ENDPOINT_ID,
+  RESIZE_ENDPOINT_ID,
+  FACE_RESTORE_ENDPOINT_ID
+} from './falService'
 import { falCostService, FalCostResult } from './falCostService'
 import { downloadOrSaveOutputImage } from './imageDownloader'
+import type { RecordImageGeneratedOptions } from './usageLogger'
 import { toLocalMediaUrl } from '../ipc/file.ipc'
 
 /** 上傳階段的最大同時上傳數量（所有圖片一次併發上傳，僅以此上限保護網路連線） */
@@ -28,6 +37,17 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       { once: true }
     )
   })
+}
+
+export interface UsageRecorder {
+  /** 圖片生成完成時記錄（寫入雲端使用記錄；模擬模式會標記為 `image_generated_SIM`） */
+  recordImageGenerated: (
+    item: BatchItem,
+    config: GenerationConfig,
+    options?: RecordImageGeneratedOptions
+  ) => void
+  /** 費用查詢完成時回填對應記錄 */
+  recordCostResolved: (itemId: string, cost: UsageCostInfo) => void
 }
 
 export interface QueueEngineDeps {
@@ -53,6 +73,8 @@ export interface QueueEngineDeps {
   }>
   /** 自訂費用查詢器（測試用），未提供時呼叫 fal.ai 平台 API */
   costResolver?: (apiKey: string, endpointId: string, requestId?: string) => Promise<FalCostResult | null>
+  /** 使用記錄器（雲端試算表），未提供時不記錄 */
+  usageRecorder?: UsageRecorder
   retryBaseDelayMs?: number
 }
 
@@ -106,17 +128,17 @@ export class BatchQueueEngine {
   constructor(deps: QueueEngineDeps) {
     this.deps = deps
     const settings = deps.getSettings()
-    this.concurrency = Math.max(1, Math.min(10, settings.concurrency || 2))
+    this.concurrency = clampConcurrency(settings.concurrency || 2)
   }
 
   public setConcurrency(newConcurrency: number): void {
-    this.concurrency = Math.max(1, Math.min(10, Math.round(newConcurrency)))
+    this.concurrency = clampConcurrency(newConcurrency)
     this.pump()
   }
 
   public startBatch(items: BatchItem[], config: GenerationConfig): void {
     const settings = this.deps.getSettings()
-    this.concurrency = Math.max(1, Math.min(10, settings.concurrency || 2))
+    this.concurrency = clampConcurrency(settings.concurrency || 2)
     this.isPaused = false
 
     const accepted: QueuedEntry[] = []
@@ -394,7 +416,7 @@ export class BatchQueueEngine {
     apiKey: string,
     endpointId: string,
     requestId?: string,
-    upscaleRequestId?: string
+    extraRequests: { endpointId: string; requestId?: string }[] = []
   ): Promise<void> {
     try {
       const resolver =
@@ -407,9 +429,10 @@ export class BatchQueueEngine {
       const genCost = await resolver(apiKey, endpointId, requestId)
       if (genCost) costs.push(genCost)
 
-      if (upscaleRequestId) {
-        const upscaleCost = await resolver(apiKey, UPSCALE_ENDPOINT_ID, upscaleRequestId)
-        if (upscaleCost) costs.push(upscaleCost)
+      for (const req of extraRequests) {
+        if (!req.requestId) continue
+        const featureCost = await resolver(apiKey, req.endpointId, req.requestId)
+        if (featureCost) costs.push(featureCost)
       }
 
       if (costs.length === 0) return
@@ -420,11 +443,19 @@ export class BatchQueueEngine {
       const totalUsd = costs.reduce((sum, c) => sum + c.costUsd, 0)
       const isEstimated = costs.some((c) => c.isEstimated)
 
-      this.updateItem(itemId, {
+      const updated = this.updateItem(itemId, {
         apiCostUsd: totalUsd,
         apiCostCurrency: costs[0].currency,
         apiCostIsEstimated: isEstimated
       })
+
+      if (updated) {
+        this.deps.usageRecorder?.recordCostResolved(itemId, {
+          costUsd: totalUsd,
+          currency: costs[0].currency,
+          isEstimated
+        })
+      }
     } catch {
       // 費用查詢失敗（網路、權限）不應影響已完成的生成結果
     }
@@ -479,8 +510,14 @@ export class BatchQueueEngine {
           savedFilePath?: string
           savedPreviewUrl?: string
           requestId?: string
-          upscaleStatus?: UpscaleStatus
+          upscaleStatus?: FeatureStatus
           upscaleRequestId?: string
+          backgroundRemovalStatus?: FeatureStatus
+          backgroundRemovalRequestId?: string
+          resizeStatus?: FeatureStatus
+          resizeRequestId?: string
+          faceRestoreStatus?: FeatureStatus
+          faceRestoreRequestId?: string
         }
 
         if (this.deps.customRunner) {
@@ -508,43 +545,153 @@ export class BatchQueueEngine {
               )
 
           let outputImageUrl = genResult.outputImageUrl
-          let upscaleStatus: UpscaleStatus | undefined
+          let upscaleStatus: FeatureStatus | undefined
           let upscaleRequestId: string | undefined
+          let backgroundRemovalStatus: FeatureStatus | undefined
+          let backgroundRemovalRequestId: string | undefined
+          let resizeStatus: FeatureStatus | undefined
+          let resizeRequestId: string | undefined
+          let faceRestoreStatus: FeatureStatus | undefined
+          let faceRestoreRequestId: string | undefined
 
-          // 實際放大：生成完成後呼叫 fal-ai/clarity-upscaler（Mock 模式不做真實放大）
-          if (!settings.mockMode && config.upscaleEnabled) {
-            onProgress({
-              upscaleStatus: 'processing',
-              logs: [
-                ...(this.itemsMap.get(item.id)?.logs ?? []),
-                `🎯 正在以 ${config.upscaleFactor}x 放大生成結果 (Clarity Upscaler)...`
-              ]
-            })
+          // 依序執行啟用的後處理功能（前一個輸出接後一個輸入；Mock 模式不做真實後處理）
+          const runFeature = async (
+            enabled: boolean,
+            onStart: () => void,
+            onDone: (requestId?: string) => void,
+            onFail: (msg: string) => void,
+            execute: () => Promise<{ outputImageUrl: string; requestId?: string }>
+          ): Promise<void> => {
+            if (!enabled || settings.mockMode) return
+            onStart()
             try {
-              const upscaleResult = await falService.executeUpscale(
-                outputImageUrl,
-                config.upscaleFactor,
-                settings.falApiKey,
-                { onStatusUpdate: onProgress, signal: controller.signal }
-              )
+              const r = await execute()
               if (controller.signal.aborted) return
-              outputImageUrl = upscaleResult.outputImageUrl
-              upscaleRequestId = upscaleResult.requestId
-              upscaleStatus = 'completed'
+              outputImageUrl = r.outputImageUrl
+              onDone(r.requestId)
             } catch (err) {
               if (controller.signal.aborted) return
-              // 放大失敗不影響已生成的原始圖片，保留原圖並標記放大失敗
-              const msg = err instanceof Error ? err.message : String(err)
+              onFail(err instanceof Error ? err.message : String(err))
+            }
+          }
+
+          const currentLogs = (): string[] => this.itemsMap.get(item.id)?.logs ?? []
+
+          await runFeature(
+            config.upscale.enabled,
+            () => {
+              upscaleStatus = 'processing'
+              onProgress({
+                upscaleStatus: 'processing',
+                logs: [...currentLogs(), `🎯 正在以 ${config.upscale.factor}x 放大 (Clarity Upscaler)...`]
+              })
+            },
+            (rid) => {
+              upscaleStatus = 'completed'
+              upscaleRequestId = rid
+              onProgress({ upscaleStatus: 'completed' })
+            },
+            (msg) => {
               upscaleStatus = 'failed'
               onProgress({
                 upscaleStatus: 'failed',
-                logs: [
-                  ...(this.itemsMap.get(item.id)?.logs ?? []),
-                  `⚠️ 放大失敗（保留原始生成圖）：${msg}`
-                ]
+                logs: [...currentLogs(), `⚠️ 放大失敗（保留前一步結果）：${msg}`]
               })
-            }
-          }
+            },
+            () =>
+              falService.executeUpscale(outputImageUrl, config.upscale, settings.falApiKey, {
+                onStatusUpdate: onProgress,
+                signal: controller.signal
+              })
+          )
+
+          await runFeature(
+            config.backgroundRemoval.enabled,
+            () => {
+              backgroundRemovalStatus = 'processing'
+              onProgress({
+                backgroundRemovalStatus: 'processing',
+                logs: [...currentLogs(), '🎯 正在去除背景 (BiRefNet)...']
+              })
+            },
+            (rid) => {
+              backgroundRemovalStatus = 'completed'
+              backgroundRemovalRequestId = rid
+              onProgress({ backgroundRemovalStatus: 'completed' })
+            },
+            (msg) => {
+              backgroundRemovalStatus = 'failed'
+              onProgress({
+                backgroundRemovalStatus: 'failed',
+                logs: [...currentLogs(), `⚠️ 去背失敗（保留前一步結果）：${msg}`]
+              })
+            },
+            () =>
+              falService.executeBackgroundRemoval(
+                outputImageUrl,
+                config.backgroundRemoval,
+                settings.falApiKey,
+                { onStatusUpdate: onProgress, signal: controller.signal }
+              )
+          )
+
+          await runFeature(
+            config.resize.enabled,
+            () => {
+              resizeStatus = 'processing'
+              onProgress({
+                resizeStatus: 'processing',
+                logs: [...currentLogs(), `🎯 正在縮放至 ${config.resize.width}×${config.resize.height}...`]
+              })
+            },
+            (rid) => {
+              resizeStatus = 'completed'
+              resizeRequestId = rid
+              onProgress({ resizeStatus: 'completed' })
+            },
+            (msg) => {
+              resizeStatus = 'failed'
+              onProgress({
+                resizeStatus: 'failed',
+                logs: [...currentLogs(), `⚠️ 縮放失敗（保留前一步結果）：${msg}`]
+              })
+            },
+            () =>
+              falService.executeResize(outputImageUrl, config.resize, settings.falApiKey, {
+                onStatusUpdate: onProgress,
+                signal: controller.signal
+              })
+          )
+
+          await runFeature(
+            config.faceRestore.enabled,
+            () => {
+              faceRestoreStatus = 'processing'
+              onProgress({
+                faceRestoreStatus: 'processing',
+                logs: [...currentLogs(), '🎯 正在進行臉部修復 (CodeFormer)...']
+              })
+            },
+            (rid) => {
+              faceRestoreStatus = 'completed'
+              faceRestoreRequestId = rid
+              onProgress({ faceRestoreStatus: 'completed' })
+            },
+            (msg) => {
+              faceRestoreStatus = 'failed'
+              onProgress({
+                faceRestoreStatus: 'failed',
+                logs: [...currentLogs(), `⚠️ 臉部修復失敗（保留前一步結果）：${msg}`]
+              })
+            },
+            () =>
+              falService.executeFaceRestore(outputImageUrl, config.faceRestore, settings.falApiKey, {
+                onStatusUpdate: onProgress,
+                signal: controller.signal
+              })
+          )
+
+          if (controller.signal.aborted) return
 
           let savedFilePath: string | undefined
           let savedPreviewUrl: string | undefined
@@ -569,7 +716,13 @@ export class BatchQueueEngine {
             savedFilePath,
             savedPreviewUrl,
             upscaleStatus,
-            upscaleRequestId
+            upscaleRequestId,
+            backgroundRemovalStatus,
+            backgroundRemovalRequestId,
+            resizeStatus,
+            resizeRequestId,
+            faceRestoreStatus,
+            faceRestoreRequestId
           }
         }
 
@@ -579,7 +732,7 @@ export class BatchQueueEngine {
         const requestId = result.requestId ?? this.itemsMap.get(item.id)?.requestId
 
         this.activeControllers.delete(item.id)
-        this.updateItem(item.id, {
+        const completedItem = this.updateItem(item.id, {
           status: 'completed',
           progress: 100,
           remoteInputUrl: result.remoteInputUrl,
@@ -589,20 +742,41 @@ export class BatchQueueEngine {
           requestId,
           upscaleStatus: result.upscaleStatus,
           upscaleRequestId: result.upscaleRequestId,
+          backgroundRemovalStatus: result.backgroundRemovalStatus,
+          backgroundRemovalRequestId: result.backgroundRemovalRequestId,
+          resizeStatus: result.resizeStatus,
+          resizeRequestId: result.resizeRequestId,
+          faceRestoreStatus: result.faceRestoreStatus,
+          faceRestoreRequestId: result.faceRestoreRequestId,
           completedAt: Date.now(),
           errorMessage: undefined
         })
         this.emitQueueStatus()
         this.pump()
 
-        // 非阻塞查詢此張圖片的 API 費用（Mock 模式不計費；放大費用一併合併計算）
+        // 寫入雲端使用記錄（每張成功圖片一列；模擬模式標記為 image_generated_SIM）
+        if (completedItem) {
+          this.deps.usageRecorder?.recordImageGenerated(completedItem, config, {
+            isSimulation: finishedSettings.mockMode
+          })
+        }
+
+        // 非阻塞查詢此張圖片的 API 費用（Mock 模式不計費，故不回填花費欄位）
         if (!finishedSettings.mockMode) {
           void this.resolveCostForItem(
             item.id,
             finishedSettings.falApiKey,
             config.endpointId,
             requestId,
-            result.upscaleRequestId
+            [
+              { endpointId: UPSCALE_ENDPOINT_ID, requestId: result.upscaleRequestId },
+              {
+                endpointId: BACKGROUND_REMOVAL_ENDPOINT_ID,
+                requestId: result.backgroundRemovalRequestId
+              },
+              { endpointId: RESIZE_ENDPOINT_ID, requestId: result.resizeRequestId },
+              { endpointId: FACE_RESTORE_ENDPOINT_ID, requestId: result.faceRestoreRequestId }
+            ]
           )
         }
         return

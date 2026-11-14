@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { CheckCircle2, FolderOpen, KeyRound, X, FlaskConical } from 'lucide-react'
 import { useBatchStore } from '../store/useBatchStore'
+import { formatDeepSeekAmount } from './DeepSeekBalancePanel'
 
 export const SettingsModal: React.FC = () => {
   const isSettingsOpen = useBatchStore((s) => s.isSettingsOpen)
   const setSettingsOpen = useBatchStore((s) => s.setSettingsOpen)
   const appSettings = useBatchStore((s) => s.appSettings)
   const updateAppSettings = useBatchStore((s) => s.updateAppSettings)
+  const deepseekBalance = useBatchStore((s) => s.deepseekBalance)
+  const deepseekBalanceStatus = useBatchStore((s) => s.deepseekBalanceStatus)
 
   const [apiKey, setApiKey] = useState('')
+  const [deepseekApiKey, setDeepseekApiKey] = useState('')
   const [namingPattern, setNamingPattern] = useState('{original_name}_ai_{timestamp}')
   const [autoSaveOutput, setAutoSaveOutput] = useState(true)
   const [mockMode, setMockMode] = useState(false)
@@ -17,6 +21,7 @@ export const SettingsModal: React.FC = () => {
   useEffect(() => {
     if (appSettings && isSettingsOpen) {
       setApiKey(appSettings.falApiKey || '')
+      setDeepseekApiKey(appSettings.deepseekApiKey || '')
       setNamingPattern(appSettings.namingPattern || '{original_name}_ai_{timestamp}')
       setAutoSaveOutput(appSettings.autoSaveOutput)
       setMockMode(appSettings.mockMode)
@@ -44,6 +49,7 @@ export const SettingsModal: React.FC = () => {
 
     await updateAppSettings({
       falApiKey: apiKey.trim(),
+      deepseekApiKey: deepseekApiKey.trim(),
       namingPattern: namingPattern.trim() || '{original_name}_ai_{timestamp}',
       autoSaveOutput,
       mockMode
@@ -61,7 +67,7 @@ export const SettingsModal: React.FC = () => {
         <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between">
           <h2 className="text-base font-bold text-white flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-indigo-400" />
-            系統與 fal.ai API 設定
+            系統與 API 設定
           </h2>
           <button
             onClick={() => setSettingsOpen(false)}
@@ -72,7 +78,7 @@ export const SettingsModal: React.FC = () => {
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5 text-xs">
+        <div className="p-6 space-y-5 text-xs max-h-[70vh] overflow-y-auto">
           {/* API Key */}
           <div className="space-y-2">
             <label className="font-semibold text-zinc-200 block">
@@ -90,6 +96,32 @@ export const SettingsModal: React.FC = () => {
             </p>
           </div>
 
+          {/* DeepSeek API Key */}
+          <div className="space-y-2">
+            <label className="font-semibold text-zinc-200 block">
+              DeepSeek API Key（AI 優化提示詞與餘額查詢）
+            </label>
+            <input
+              type="password"
+              value={deepseekApiKey}
+              onChange={(e) => setDeepseekApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 font-mono focus:outline-none focus:border-sky-500"
+            />
+            <p className="text-[11px] text-zinc-500">
+              可前往 <span className="text-sky-400">https://platform.deepseek.com/api_keys</span>{' '}
+              建立 API Key；留空會使用內建預設金鑰。
+              {deepseekBalance
+                ? ` 目前餘額 ${formatDeepSeekAmount(
+                    deepseekBalance.totalBalance,
+                    deepseekBalance.currency
+                  )}。`
+                : deepseekBalanceStatus === 'loading'
+                  ? ' 正在查詢餘額…'
+                  : ''}
+            </p>
+          </div>
+
           {/* Mock Mode */}
           <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-4">
             <div className="space-y-0.5">
@@ -99,6 +131,9 @@ export const SettingsModal: React.FC = () => {
               </div>
               <p className="text-[11px] text-zinc-400">
                 開啟時不需消耗真實 API 點數，主程序會模擬上傳、排隊與生成並輸出圖片至目標資料夾。
+                <br />
+                使用記錄仍會寫入 Google 試算表，事件標記為{' '}
+                <code className="text-amber-300/90">image_generated_SIM</code>（花費欄位留空）。
               </p>
             </div>
             <input

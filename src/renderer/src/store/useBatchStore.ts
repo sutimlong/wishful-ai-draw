@@ -3,13 +3,18 @@ import {
   AppSettings,
   BatchItem,
   BatchQueueStatus,
+  DEFAULT_FAL_MODEL_ID,
   DEFAULT_FAL_PRESETS,
+  DeepSeekBalance,
+  FalCreditBalance,
   GenerationConfig,
   SelectedVideoInfo,
   TaskStatus
 } from '@shared/types'
+import { FAL_MODEL_CATALOG } from '@shared/falModelCatalog'
 
 export type FilterTab = 'all' | 'idle' | 'active' | 'completed' | 'failed'
+export type ApiCreditStatus = 'idle' | 'loading' | 'ready' | 'error' | 'unauthorized'
 
 interface BatchState {
   items: BatchItem[]
@@ -22,9 +27,21 @@ interface BatchState {
   appSettings: AppSettings | null
   generationConfig: GenerationConfig
   queueStatus: BatchQueueStatus
+  /** fal.ai 剩餘額度（無法查詢時為 null） */
+  apiCreditBalance: FalCreditBalance | null
+  apiCreditStatus: ApiCreditStatus
+  /** DeepSeek 目前餘額（無法查詢時為 null） */
+  deepseekBalance: DeepSeekBalance | null
+  deepseekBalanceStatus: ApiCreditStatus
 
   // Initialization
   initStore: () => Promise< () => void >
+
+  /** 重新查詢 fal.ai 剩餘額度 */
+  refreshApiCreditBalance: () => Promise<void>
+
+  /** 重新查詢 DeepSeek 目前餘額 */
+  refreshDeepSeekBalance: () => Promise<void>
 
   // Item management
   addItems: (newItems: BatchItem[]) => void
@@ -66,7 +83,10 @@ interface BatchState {
   setConcurrency: (concurrency: number) => Promise<void>
 }
 
-const defaultPreset = DEFAULT_FAL_PRESETS[0]
+// 預設模型固定為 GPT Image 2.6 Sunburst（見 DEFAULT_FAL_MODEL_ID）
+const defaultPreset =
+  DEFAULT_FAL_PRESETS.find((preset) => preset.id === DEFAULT_FAL_MODEL_ID) ??
+  DEFAULT_FAL_PRESETS[0]
 
 export const useBatchStore = create<BatchState>((set, get) => ({
   items: [],
@@ -77,6 +97,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   isVideoTrimmerOpen: false,
   activeVideo: null,
   appSettings: null,
+  apiCreditBalance: null,
+  apiCreditStatus: 'idle',
+  deepseekBalance: null,
+  deepseekBalanceStatus: 'idle',
   generationConfig: {
     endpointId: defaultPreset.id,
     imageInputField: defaultPreset.imageInputField,
@@ -91,8 +115,39 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     outputFormat: 'png',
     seed: null,
     customJsonParams: '',
-    upscaleEnabled: false,
-    upscaleFactor: 2
+    upscale: {
+      enabled: false,
+      factor: 2,
+      creativity: 0.35,
+      resemblance: 0.6,
+      guidanceScale: 4,
+      numInferenceSteps: 18,
+      negativePrompt: '(worst quality, low quality, normal quality:2)',
+      seed: null
+    },
+    backgroundRemoval: {
+      enabled: false,
+      model: 'General Use (Light)',
+      operatingResolution: '1024x1024',
+      refineForeground: true,
+      outputFormat: 'png'
+    },
+    resize: {
+      enabled: false,
+      width: 1024,
+      height: 1024,
+      fit: 'contain',
+      outputFormat: 'png'
+    },
+    faceRestore: {
+      enabled: false,
+      fidelity: 0.5,
+      upscaleFactor: 2,
+      faceUpscale: true,
+      aligned: false,
+      onlyCenterFace: false,
+      seed: null
+    }
   },
   queueStatus: {
     isRunning: false,
@@ -107,12 +162,26 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const settings = await window.electronAPI.getSettings()
     set({ appSettings: settings })
 
+    if (settings.hasApiKey) {
+      void get().refreshApiCreditBalance()
+    }
+    if (settings.hasDeepseekApiKey) {
+      void get().refreshDeepSeekBalance()
+    }
+
     const unsubItem = window.electronAPI.onBatchItemUpdated((updatedItem) => {
       get().updateItemState(updatedItem)
     })
 
+    // 批量結束時重新查詢剩餘額度，讓頂部列的數字保持最新
+    let wasRunning = false
     const unsubQueue = window.electronAPI.onBatchQueueStatus((status) => {
       set({ queueStatus: status })
+      if (wasRunning && !status.isRunning) {
+        void get().refreshApiCreditBalance()
+        void get().refreshDeepSeekBalance()
+      }
+      wasRunning = status.isRunning
     })
 
     return () => {
@@ -244,9 +313,62 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   setSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
 
+  refreshApiCreditBalance: async () => {
+    if (!get().appSettings?.hasApiKey) {
+      set({ apiCreditBalance: null, apiCreditStatus: 'idle' })
+      return
+    }
+
+    set({ apiCreditStatus: 'loading' })
+    try {
+      const result = await window.electronAPI.getApiCreditBalance()
+      if (result.ok) {
+        set({ apiCreditBalance: result.balance, apiCreditStatus: 'ready' })
+      } else {
+        set({
+          apiCreditBalance: null,
+          // 403 / 401：Key 缺少 billing:usage:read 權限，需換 Key
+          apiCreditStatus: result.reason === 'unauthorized' ? 'unauthorized' : 'error'
+        })
+      }
+    } catch {
+      set({ apiCreditBalance: null, apiCreditStatus: 'error' })
+    }
+  },
+
+  refreshDeepSeekBalance: async () => {
+    if (!get().appSettings?.hasDeepseekApiKey) {
+      set({ deepseekBalance: null, deepseekBalanceStatus: 'idle' })
+      return
+    }
+
+    set({ deepseekBalanceStatus: 'loading' })
+    try {
+      const result = await window.electronAPI.getDeepSeekBalance()
+      if (result.ok) {
+        set({ deepseekBalance: result.balance, deepseekBalanceStatus: 'ready' })
+      } else {
+        set({
+          deepseekBalance: null,
+          // 401 / 403：金鑰無效或已失效，需使用者更換 Key
+          deepseekBalanceStatus: result.reason === 'unauthorized' ? 'unauthorized' : 'error'
+        })
+      }
+    } catch {
+      set({ deepseekBalance: null, deepseekBalanceStatus: 'error' })
+    }
+  },
+
   updateAppSettings: async (partial) => {
     const updated = await window.electronAPI.updateSettings(partial)
     set({ appSettings: updated })
+    // API Key 變更後重新查詢剩餘額度（清空 key 時會自動重設為 idle）
+    if (partial.falApiKey !== undefined) {
+      void get().refreshApiCreditBalance()
+    }
+    if (partial.deepseekApiKey !== undefined) {
+      void get().refreshDeepSeekBalance()
+    }
     return updated
   },
 
@@ -257,7 +379,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   },
 
   applyModelPreset: (presetId) => {
-    const preset = DEFAULT_FAL_PRESETS.find((p) => p.id === presetId)
+    const preset = FAL_MODEL_CATALOG.find((p) => p.id === presetId)
     if (!preset) {
       set((state) => ({
         generationConfig: { ...state.generationConfig, endpointId: presetId }
@@ -271,6 +393,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         imageInputField: preset.imageInputField,
         isArrayImageInput: Boolean(preset.isArrayImageInput),
         includeDiffusionParams: preset.includeDiffusionParams !== false,
+        unsupportedFields: preset.unsupportedFields,
         strength:
           typeof preset.defaultParams.strength === 'number'
             ? preset.defaultParams.strength

@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  BackgroundRemovalFeatureConfig,
+  FaceRestoreFeatureConfig,
+  ResizeFeatureConfig,
+  UpscaleFeatureConfig
+} from '../src/shared/types'
 
 const { subscribeMock, configMock } = vi.hoisted(() => ({
   subscribeMock: vi.fn(),
@@ -22,6 +28,19 @@ async function loadService(): Promise<typeof import('../src/main/services/falSer
   return import('../src/main/services/falService')
 }
 
+function makeUpscaleCfg(factor: number): UpscaleFeatureConfig {
+  return {
+    enabled: true,
+    factor,
+    creativity: 0.35,
+    resemblance: 0.6,
+    guidanceScale: 4,
+    numInferenceSteps: 18,
+    negativePrompt: 'bad',
+    seed: 42
+  }
+}
+
 describe('FalService.executeUpscale', () => {
   beforeEach(() => {
     subscribeMock.mockClear()
@@ -39,7 +58,7 @@ describe('FalService.executeUpscale', () => {
 
     const result = await service.executeUpscale(
       'https://fal.media/original.png',
-      2,
+      makeUpscaleCfg(2),
       'fal-key-1',
       { onStatusUpdate: () => {}, signal: new AbortController().signal }
     )
@@ -52,7 +71,9 @@ describe('FalService.executeUpscale', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           image_url: 'https://fal.media/original.png',
-          upscale_factor: 2
+          upscale_factor: 2,
+          creativity: 0.35,
+          resemblance: 0.6
         })
       })
     )
@@ -64,7 +85,7 @@ describe('FalService.executeUpscale', () => {
     const { FalService } = await loadService()
     const service = new FalService()
 
-    await service.executeUpscale('https://fal.media/a.png', 10, 'fal-key', {
+    await service.executeUpscale('https://fal.media/a.png', makeUpscaleCfg(10), 'fal-key', {
       onStatusUpdate: () => {},
       signal: new AbortController().signal
     })
@@ -78,10 +99,77 @@ describe('FalService.executeUpscale', () => {
     const service = new FalService()
 
     await expect(
-      service.executeUpscale('https://fal.media/a.png', 2, '', {
+      service.executeUpscale('https://fal.media/a.png', makeUpscaleCfg(2), '', {
         onStatusUpdate: () => {},
         signal: new AbortController().signal
       })
     ).rejects.toMatchObject({ status: 401 })
+  })
+})
+
+describe('FalService 其他後處理功能', () => {
+  beforeEach(() => {
+    subscribeMock.mockClear()
+    configMock.mockClear()
+    subscribeMock.mockResolvedValue({ data: { image: { url: 'https://fal.media/out.png' } } })
+  })
+
+  it('executeBackgroundRemoval 呼叫 birefnet', async () => {
+    const { FalService, BACKGROUND_REMOVAL_ENDPOINT_ID } = await loadService()
+    const cfg: BackgroundRemovalFeatureConfig = {
+      enabled: true,
+      model: 'Portrait',
+      operatingResolution: '2048x2048',
+      refineForeground: false,
+      outputFormat: 'webp'
+    }
+    await new FalService().executeBackgroundRemoval('https://fal.media/in.png', cfg, 'k', {
+      onStatusUpdate: () => {},
+      signal: new AbortController().signal
+    })
+    expect(subscribeMock).toHaveBeenCalledWith(
+      BACKGROUND_REMOVAL_ENDPOINT_ID,
+      expect.objectContaining({
+        input: expect.objectContaining({ image_url: 'https://fal.media/in.png', model: 'Portrait' })
+      })
+    )
+  })
+
+  it('executeResize 呼叫 fal-image-resize', async () => {
+    const { FalService, RESIZE_ENDPOINT_ID } = await loadService()
+    const cfg: ResizeFeatureConfig = { enabled: true, width: 800, height: 600, fit: 'cover', outputFormat: 'png' }
+    await new FalService().executeResize('https://fal.media/in.png', cfg, 'k', {
+      onStatusUpdate: () => {},
+      signal: new AbortController().signal
+    })
+    expect(subscribeMock).toHaveBeenCalledWith(
+      RESIZE_ENDPOINT_ID,
+      expect.objectContaining({
+        input: expect.objectContaining({ width: 800, height: 600, fit: 'cover' })
+      })
+    )
+  })
+
+  it('executeFaceRestore 呼叫 codeformer', async () => {
+    const { FalService, FACE_RESTORE_ENDPOINT_ID } = await loadService()
+    const cfg: FaceRestoreFeatureConfig = {
+      enabled: true,
+      fidelity: 0.8,
+      upscaleFactor: 2,
+      faceUpscale: true,
+      aligned: false,
+      onlyCenterFace: true,
+      seed: 7
+    }
+    await new FalService().executeFaceRestore('https://fal.media/in.png', cfg, 'k', {
+      onStatusUpdate: () => {},
+      signal: new AbortController().signal
+    })
+    expect(subscribeMock).toHaveBeenCalledWith(
+      FACE_RESTORE_ENDPOINT_ID,
+      expect.objectContaining({
+        input: expect.objectContaining({ fidelity: 0.8, face_upscale: true, only_center_face: true })
+      })
+    )
   })
 })

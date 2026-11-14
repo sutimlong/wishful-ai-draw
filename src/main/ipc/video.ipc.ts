@@ -4,10 +4,12 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   SelectedVideoInfo,
   VideoExtractOptions,
-  VideoExtractProgress
+  VideoExtractProgress,
+  VideoFilmstripOptions,
+  VideoFilmstripThumb
 } from '../../shared/types'
 import { toLocalMediaUrl } from './file.ipc'
-import { extractFramesFromVideo } from '../services/videoService'
+import { extractFramesFromVideo, generateFilmstrip } from '../services/videoService'
 
 function broadcastVideoProgress(progress: VideoExtractProgress): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -48,6 +50,17 @@ export function registerVideoIpc(): void {
       return extractFramesFromVideo(options, (progress) => {
         broadcastVideoProgress(progress)
       })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.VIDEO_GENERATE_FILMSTRIP,
+    async (_event, options: VideoFilmstripOptions): Promise<VideoFilmstripThumb[]> => {
+      const frames = await generateFilmstrip(options)
+      return frames.map((frame) => ({
+        time: frame.time,
+        imageUrl: toLocalMediaUrl(frame.filePath)
+      }))
     }
   )
 }

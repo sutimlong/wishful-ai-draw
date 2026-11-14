@@ -1,7 +1,14 @@
 import { fal } from '@fal-ai/client'
 import { readFile } from 'fs/promises'
 import { basename, extname } from 'path'
-import { BatchItem, GenerationConfig } from '../../shared/types'
+import {
+  BackgroundRemovalFeatureConfig,
+  BatchItem,
+  FaceRestoreFeatureConfig,
+  GenerationConfig,
+  ResizeFeatureConfig,
+  UpscaleFeatureConfig
+} from '../../shared/types'
 import { buildFalInputPayload, extractFalOutputImageUrl } from './falPayloadBuilder'
 
 // Cache uploaded local file paths to avoid re-uploading on retry or parameter tweak
@@ -11,6 +18,12 @@ const uploadInflight = new Map<string, Promise<string>>()
 
 /** 放大圖片使用的 fal.ai 端點 */
 export const UPSCALE_ENDPOINT_ID = 'fal-ai/clarity-upscaler'
+/** 去背使用的 fal.ai 端點 */
+export const BACKGROUND_REMOVAL_ENDPOINT_ID = 'fal-ai/birefnet'
+/** 縮放使用的 fal.ai 端點 */
+export const RESIZE_ENDPOINT_ID = 'fal-ai/fal-image-resize'
+/** 臉部修復使用的 fal.ai 端點 */
+export const FACE_RESTORE_ENDPOINT_ID = 'fal-ai/codeformer'
 
 function getMimeType(filePath: string): string {
   const ext = extname(filePath).toLowerCase()
@@ -257,17 +270,21 @@ export class FalService {
     return { remoteInputUrl, outputImageUrl, requestId: result.requestId }
   }
 
-  /** 呼叫 fal-ai/clarity-upscaler 將生成結果放大，回傳放大後圖片 URL */
-  public async executeUpscale(
-    outputImageUrl: string,
-    upscaleFactor: number,
+  /**
+   * 通用影像處理訂閱器：呼叫指定 fal 模型並解析輸出圖片 URL。
+   * 所有後處理功能（放大 / 去背 / 縮放 / 臉部修復）皆透過此方法執行。
+   */
+  private async subscribeToModel(
+    endpointId: string,
+    input: Record<string, unknown>,
     apiKey: string,
-    callbacks: FalExecutionCallbacks
+    callbacks: FalExecutionCallbacks,
+    startProgress: number
   ): Promise<{ outputImageUrl: string; requestId?: string }> {
     const { onStatusUpdate, signal } = callbacks
 
     if (!apiKey || !apiKey.trim()) {
-      const err = new Error('尚未設定 fal.ai API Key，無法執行放大')
+      const err = new Error('尚未設定 fal.ai API Key，無法執行影像處理')
       ;(err as { status?: number }).status = 401
       throw err
     }
@@ -275,16 +292,9 @@ export class FalService {
     this.configureCredentials(apiKey)
     if (signal.aborted) throw new Error('Task Cancelled')
 
-    // clarity-upscaler 支援的放大倍率範圍為 1~4，這裡做安全夾取
-    const factor = Math.max(1, Math.min(4, Math.round(upscaleFactor)))
-
-    let stepProgress = 46
-    const result = await fal.subscribe(UPSCALE_ENDPOINT_ID, {
-      input: {
-        image_url: outputImageUrl,
-        upscale_factor: factor,
-        creativity: 0.35
-      },
+    let stepProgress = startProgress
+    const result = await fal.subscribe(endpointId, {
+      input,
       logs: true,
       onQueueUpdate: (update) => {
         if (signal.aborted) return
@@ -292,7 +302,7 @@ export class FalService {
           onStatusUpdate({
             status: 'processing',
             queuePosition: update.queue_position,
-            progress: 46
+            progress: startProgress
           })
         } else if (update.status === 'IN_PROGRESS') {
           stepProgress = Math.min(96, stepProgress + 14)
@@ -303,8 +313,97 @@ export class FalService {
 
     if (signal.aborted) throw new Error('Task Cancelled')
 
-    const upscaledUrl = extractFalOutputImageUrl(result)
-    return { outputImageUrl: upscaledUrl, requestId: result.requestId }
+    const outputImageUrl = extractFalOutputImageUrl(result)
+    return { outputImageUrl, requestId: result.requestId }
+  }
+
+  /** 呼叫 fal-ai/clarity-upscaler 將生成結果放大 */
+  public async executeUpscale(
+    outputImageUrl: string,
+    cfg: UpscaleFeatureConfig,
+    apiKey: string,
+    callbacks: FalExecutionCallbacks
+  ): Promise<{ outputImageUrl: string; requestId?: string }> {
+    const input: Record<string, unknown> = {
+      image_url: outputImageUrl,
+      upscale_factor: Math.max(1, Math.min(4, Math.round(cfg.factor))),
+      creativity: cfg.creativity,
+      resemblance: cfg.resemblance,
+      guidance_scale: cfg.guidanceScale,
+      num_inference_steps: cfg.numInferenceSteps
+    }
+    if (cfg.negativePrompt && cfg.negativePrompt.trim()) {
+      input.negative_prompt = cfg.negativePrompt.trim()
+    }
+    if (typeof cfg.seed === 'number' && !Number.isNaN(cfg.seed)) {
+      input.seed = cfg.seed
+    }
+    return this.subscribeToModel(UPSCALE_ENDPOINT_ID, input, apiKey, callbacks, 46)
+  }
+
+  /** 呼叫 fal-ai/birefnet 去除背景 */
+  public async executeBackgroundRemoval(
+    outputImageUrl: string,
+    cfg: BackgroundRemovalFeatureConfig,
+    apiKey: string,
+    callbacks: FalExecutionCallbacks
+  ): Promise<{ outputImageUrl: string; requestId?: string }> {
+    return this.subscribeToModel(
+      BACKGROUND_REMOVAL_ENDPOINT_ID,
+      {
+        image_url: outputImageUrl,
+        model: cfg.model,
+        operating_resolution: cfg.operatingResolution,
+        refine_foreground: cfg.refineForeground,
+        output_format: cfg.outputFormat
+      },
+      apiKey,
+      callbacks,
+      46
+    )
+  }
+
+  /** 呼叫 fal-ai/fal-image-resize 縮放圖片 */
+  public async executeResize(
+    outputImageUrl: string,
+    cfg: ResizeFeatureConfig,
+    apiKey: string,
+    callbacks: FalExecutionCallbacks
+  ): Promise<{ outputImageUrl: string; requestId?: string }> {
+    return this.subscribeToModel(
+      RESIZE_ENDPOINT_ID,
+      {
+        image_url: outputImageUrl,
+        width: Math.round(cfg.width),
+        height: Math.round(cfg.height),
+        fit: cfg.fit,
+        output_format: cfg.outputFormat
+      },
+      apiKey,
+      callbacks,
+      46
+    )
+  }
+
+  /** 呼叫 fal-ai/codeformer 修復模糊/失真的人臉 */
+  public async executeFaceRestore(
+    outputImageUrl: string,
+    cfg: FaceRestoreFeatureConfig,
+    apiKey: string,
+    callbacks: FalExecutionCallbacks
+  ): Promise<{ outputImageUrl: string; requestId?: string }> {
+    const input: Record<string, unknown> = {
+      image_url: outputImageUrl,
+      fidelity: cfg.fidelity,
+      upscale_factor: Math.round(cfg.upscaleFactor),
+      aligned: cfg.aligned,
+      only_center_face: cfg.onlyCenterFace,
+      face_upscale: cfg.faceUpscale
+    }
+    if (typeof cfg.seed === 'number' && !Number.isNaN(cfg.seed)) {
+      input.seed = cfg.seed
+    }
+    return this.subscribeToModel(FACE_RESTORE_ENDPOINT_ID, input, apiKey, callbacks, 46)
   }
 }
 

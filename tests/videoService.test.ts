@@ -6,8 +6,10 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   calculateExtractionProgress,
+  computeFilmstripFps,
   estimateFrameCount,
   extractFramesFromVideo,
+  generateFilmstrip,
   parseTimemarkToSeconds
 } from '../src/main/services/videoService'
 
@@ -65,6 +67,58 @@ describe('videoService (Phase 6: 8fps Frame Extraction)', () => {
       expect(framePaths.length).toBeLessThanOrEqual(10)
       expect(existsSync(framePaths[0])).toBe(true)
       expect(progressUpdates).toContain(100)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('computes filmstrip fps from duration and count', () => {
+    expect(computeFilmstripFps(10, 20)).toBeCloseTo(2)
+    expect(computeFilmstripFps(4, 8)).toBeCloseTo(2)
+    expect(computeFilmstripFps(0, 20)).toBe(1)
+    // count 會被夾在 2 ~ 60
+    expect(computeFilmstripFps(10, 1000)).toBeCloseTo(6)
+  })
+
+  it('generates evenly spaced JPEG filmstrip thumbnails in a single ffmpeg pass', async () => {
+    if (!ffmpegStatic || !existsSync(ffmpegStatic)) {
+      return
+    }
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'wishful-filmstrip-test-'))
+    const sampleVideoPath = join(tempDir, 'strip.mp4')
+
+    try {
+      execFileSync(ffmpegStatic, [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=160x120:rate=16:duration=1.5',
+        '-pix_fmt',
+        'yuv420p',
+        sampleVideoPath
+      ])
+
+      const frames = await generateFilmstrip({
+        filePath: sampleVideoPath,
+        duration: 1.5,
+        count: 8
+      })
+
+      expect(frames.length).toBeGreaterThanOrEqual(7)
+      expect(frames.length).toBeLessThanOrEqual(8)
+      expect(frames[0].time).toBe(0)
+
+      for (const frame of frames) {
+        expect(frame.filePath.toLowerCase().endsWith('.jpg')).toBe(true)
+        expect(existsSync(frame.filePath)).toBe(true)
+        expect(frame.time).toBeGreaterThanOrEqual(0)
+        expect(frame.time).toBeLessThan(1.5)
+      }
+
+      const times = frames.map((frame) => frame.time)
+      expect([...times].sort((a, b) => a - b)).toEqual(times)
     } finally {
       rmSync(tempDir, { recursive: true, force: true })
     }

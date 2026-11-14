@@ -1,5 +1,6 @@
 import React from 'react'
 import { Gauge, Pause, Play, Square, Zap } from 'lucide-react'
+import { MAX_BATCH_CONCURRENCY } from '@shared/concurrency'
 import { useBatchStore } from '../store/useBatchStore'
 import { formatUsd } from '../utils/cost'
 
@@ -44,12 +45,12 @@ export const BottomActionBar: React.FC = () => {
         <input
           type="range"
           min={1}
-          max={10}
+          max={MAX_BATCH_CONCURRENCY}
           step={1}
           value={concurrency}
           onChange={(e) => setConcurrency(parseInt(e.target.value, 10))}
-          className="w-24 accent-indigo-500 cursor-pointer"
-          title="調整同時呼叫 fal.ai 生成的任務數量 (1~10)；圖片上傳階段一律全部並行"
+          className="w-44 accent-indigo-500 cursor-pointer"
+          title={`調整同時呼叫 fal.ai 生成的任務數量 (1~${MAX_BATCH_CONCURRENCY})；fal.ai 自助方案上限為 40，圖片上傳階段一律全部並行`}
         />
       </div>
 
@@ -67,7 +68,7 @@ export const BottomActionBar: React.FC = () => {
               <span
                 title={
                   hasEstimatedCost
-                    ? '本批累計 fal.ai 費用（含預估單價：API Key 無帳務權限或帳務尚未入帳）'
+                    ? '本批累計 fal.ai 費用（含預估費用：API Key 無帳務權限或帳務尚未入帳）'
                     : '本批累計 fal.ai 實際扣款金額'
                 }
                 className={`px-1.5 py-0.5 rounded border text-[11px] ${
