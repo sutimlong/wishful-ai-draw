@@ -11,6 +11,8 @@ import { BottomActionBar } from './components/BottomActionBar'
 import { SettingsModal } from './components/SettingsModal'
 import { VideoTrimmer } from './components/VideoTrimmer'
 import { TextToImagePage } from './components/TextToImagePage'
+import { TextToVideoPage } from './components/TextToVideoPage'
+import { ImageToVideoPage } from './components/ImageToVideoPage'
 
 export function App(): React.ReactElement {
   const initStore = useBatchStore((s) => s.initStore)
@@ -56,27 +58,62 @@ export function App(): React.ReactElement {
       {/* 1. Top Header Bar */}
       <TopBar />
 
-      {activeView === 'stylize' ? (
-        <>
-          {/* 2. Main Three-Column Workspace */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Left: AI Model & Parameters Sidebar */}
-            <SidebarConfig />
+      {/* 三個主要工作區保持掛載，切換頁面時只隱藏，避免中斷背景生成與遺失進度 */}
+      <div
+        className={
+          activeView === 'stylize'
+            ? 'flex-1 flex flex-col overflow-hidden'
+            : 'hidden'
+        }
+      >
+        {/* 2. Main Three-Column Workspace */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left: AI Model & Parameters Sidebar */}
+          <SidebarConfig />
 
-            {/* Center: Batch Drag & Drop Grid Workspace */}
-            <BatchWorkspace />
+          {/* Center: Batch Drag & Drop Grid Workspace */}
+          <BatchWorkspace />
 
-            {/* Right: Before/After Inspector Drawer */}
-            <InspectorPanel />
-          </div>
+          {/* Right: Before/After Inspector Drawer */}
+          <InspectorPanel />
+        </div>
 
-          {/* 3. Bottom Concurrency & Batch Execution Bar */}
-          <BottomActionBar />
-        </>
-      ) : (
-        /* 文字生成圖片頁面 */
+        {/* 3. Bottom Concurrency & Batch Execution Bar */}
+        <BottomActionBar />
+      </div>
+
+      <div
+        className={
+          activeView === 'text-to-image'
+            ? 'flex-1 flex overflow-hidden'
+            : 'hidden'
+        }
+      >
+        {/* 文字生成圖片頁面 */}
         <TextToImagePage />
-      )}
+      </div>
+
+      <div
+        className={
+          activeView === 'text-to-video'
+            ? 'flex-1 flex overflow-hidden'
+            : 'hidden'
+        }
+      >
+        {/* 文字生成影片頁面 */}
+        <TextToVideoPage />
+      </div>
+
+      <div
+        className={
+          activeView === 'image-to-video'
+            ? 'flex-1 flex overflow-hidden'
+            : 'hidden'
+        }
+      >
+        {/* 圖片生成影片頁面 */}
+        <ImageToVideoPage />
+      </div>
 
       {/* 4. Settings & API Key Modal */}
       <SettingsModal />

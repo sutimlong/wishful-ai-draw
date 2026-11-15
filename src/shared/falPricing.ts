@@ -11,6 +11,9 @@ export const ASSUMED_OUTPUT_MEGAPIXELS = 1
 /** fal 計價單位的中文名稱 */
 const UNIT_LABELS: Record<string, string> = {
   images: '張',
+  videos: '部',
+  'video segments': '片段',
+  '5 seconds': '5 秒',
   generations: '次',
   '1': '次',
   units: '單位',
@@ -18,7 +21,9 @@ const UNIT_LABELS: Record<string, string> = {
   megapixels: 'MP',
   'processed megapixels': 'MP（輸入＋輸出）',
   'compute seconds': '運算秒',
-  seconds: '秒'
+  seconds: '秒',
+  '1000 tokens': '1K tokens',
+  '1m tokens': '1M tokens'
 }
 
 /** 計價單位轉中文標籤（未知單位原樣顯示） */

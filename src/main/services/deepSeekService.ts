@@ -18,10 +18,17 @@ import type { DeepSeekBalanceResult } from '../../shared/types'
 
 export const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions'
 export const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
+/** 提示詞優化使用的模型（沿用既有設定） */
 export const DEEPSEEK_MODEL = 'deepseek-chat'
+/**
+ * 對話模式使用的模型：DeepSeek Flash。
+ * 官方 Chat Completions 支援 `image_url` 內容（Vision），可讓 AI 直接看使用者上傳的圖片。
+ */
+export const DEEPSEEK_CHAT_MODEL = 'deepseek-flash'
 export const DEFAULT_DEEPSEEK_API_KEY = 'sk-37718d6662e84f4e80eb2085b1b30fba'
 
 const DEEPSEEK_REQUEST_TIMEOUT_MS = 30000
+const DEEPSEEK_CHAT_TIMEOUT_MS = 90000
 const DEEPSEEK_BALANCE_TIMEOUT_MS = 8000
 
 /**
@@ -39,9 +46,26 @@ export const PROMPT_OPTIMIZATION_SYSTEM_PROMPT = [
   'Return ONLY the final optimized English prompt text, without any prefix, suffix, quotation marks or explanation.'
 ].join('\n')
 
+/** OpenAI 相容格式的文字內容片段 */
+export interface DeepSeekTextContentPart {
+  type: 'text'
+  text: string
+}
+
+/** OpenAI 相容格式的圖片內容片段（支援 http(s) 或 base64 data URL） */
+export interface DeepSeekImageContentPart {
+  type: 'image_url'
+  image_url: {
+    url: string
+    detail?: 'low' | 'high' | 'original' | 'auto'
+  }
+}
+
+export type DeepSeekChatContentPart = DeepSeekTextContentPart | DeepSeekImageContentPart
+
 export interface DeepSeekChatMessage {
-  role: 'system' | 'user'
-  content: string
+  role: 'system' | 'user' | 'assistant'
+  content: string | DeepSeekChatContentPart[]
 }
 
 export interface DeepSeekChatRequest {
@@ -49,10 +73,20 @@ export interface DeepSeekChatRequest {
   messages: DeepSeekChatMessage[]
   temperature: number
   stream: false
+  /** JSON Output 模式：要求模型只回傳合法 JSON 物件 */
+  response_format?: { type: 'json_object' }
+  /** DeepSeek Flash 的思考模式（對話模式預設關閉，讓回覆更即時） */
+  thinking?: { type: 'enabled' | 'disabled' }
 }
 
 interface DeepSeekChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string | null } | null } | null> | null
+  choices?: Array<{
+    message?: {
+      content?: string | null
+      reasoning_content?: string | null
+    } | null
+    finish_reason?: string | null
+  } | null> | null
   error?: { message?: string } | null
 }
 
@@ -91,6 +125,105 @@ export interface OptimizePromptOptions {
   timeoutMs?: number
 }
 
+/** 對話模式（DeepSeek Flash，支援看圖）的呼叫選項 */
+export interface DeepSeekChatCompletionOptions {
+  /** 覆寫 API Key（預設使用內建的 DEFAULT_DEEPSEEK_API_KEY） */
+  apiKey?: string
+  /** 覆寫模型（預設 deepseek-flash） */
+  model?: string
+  /** 覆寫 fetch（測試注入用） */
+  fetchImpl?: typeof globalThis.fetch
+  /** 請求逾時毫秒數 */
+  timeoutMs?: number
+  /** 取樣溫度 */
+  temperature?: number
+  /** 設為 json_object 時要求模型只輸出 JSON */
+  responseFormat?: 'json_object'
+  /** 是否啟用思考模式（預設關閉，讓對話回覆更即時） */
+  thinking?: boolean
+}
+
+/** 共用的 DeepSeek Chat Completions 請求與錯誤處理 */
+async function requestDeepSeekChatCompletion(
+  request: DeepSeekChatRequest,
+  options: {
+    apiKey: string
+    fetchImpl: typeof globalThis.fetch
+    timeoutMs: number
+    emptyContentMessage: string
+  }
+): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs)
+
+  try {
+    let response: Response
+    try {
+      response = await options.fetchImpl(DEEPSEEK_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Bearer ${options.apiKey}`
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal
+      })
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new DeepSeekPromptError('DeepSeek 回應逾時，請稍後再試')
+      }
+      throw new DeepSeekPromptError('無法連線至 DeepSeek，請檢查網路連線')
+    }
+
+    let rawText = ''
+    let body: unknown = null
+    try {
+      rawText = await response.text()
+      body = rawText ? JSON.parse(rawText) : null
+    } catch {
+      body = null
+    }
+
+    if (!response.ok) {
+      const apiMessage = (body as DeepSeekChatCompletionResponse | null)?.error?.message
+      const suffix = apiMessage ? `：${apiMessage}` : ''
+      if (response.status === 401) {
+        throw new DeepSeekPromptError(`DeepSeek API Key 無效或已失效${suffix}`)
+      }
+      if (response.status === 429) {
+        throw new DeepSeekPromptError(`DeepSeek 請求過於頻繁，請稍後再試${suffix}`)
+      }
+      throw new DeepSeekPromptError(`DeepSeek 服務回應錯誤（HTTP ${response.status}）${suffix}`)
+    }
+
+    const choice = (body as DeepSeekChatCompletionResponse | null)?.choices?.[0]
+    const message = choice?.message
+    const content = message?.content
+    if (!content || !content.trim()) {
+      // 少數情況模型只把決策放在 reasoning_content；若其中包含聊天 JSON 就沿用
+      const reasoning =
+        typeof message?.reasoning_content === 'string' ? message.reasoning_content : ''
+      const jsonMatch = reasoning.match(/\{[\s\S]*\}/)
+      if (jsonMatch && jsonMatch[0].includes('"action"')) {
+        return jsonMatch[0]
+      }
+
+      // 診斷用：不包含金鑰，只記錄 API 原始回應，方便判斷是否為空 content
+      console.error(
+        '[DeepSeek] 回應缺少有效 content：',
+        rawText.slice(0, 2000),
+        'finish_reason:',
+        choice?.finish_reason ?? 'unknown'
+      )
+      throw new DeepSeekPromptError(options.emptyContentMessage)
+    }
+    return content.trim()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * 呼叫 DeepSeek 將提示詞優化並翻譯成英文。
  * 成功時回傳純文字提示詞（已 trim）；失敗時拋出 DeepSeekPromptError。
@@ -109,58 +242,79 @@ export async function optimizePrompt(
     throw new DeepSeekPromptError('未設定 DeepSeek API Key')
   }
 
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch
-  const timeoutMs = options.timeoutMs ?? DEEPSEEK_REQUEST_TIMEOUT_MS
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  return requestDeepSeekChatCompletion(buildDeepSeekRequest(trimmed, options.model), {
+    apiKey,
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    timeoutMs: options.timeoutMs ?? DEEPSEEK_REQUEST_TIMEOUT_MS,
+    emptyContentMessage: 'DeepSeek 未回傳有效的提示詞內容'
+  })
+}
 
-  try {
-    let response: Response
+/**
+ * 對話模式用的 Chat Completions 呼叫。
+ * 支援文字與圖片（image_url）內容，成功時回傳模型輸出的純文字（已 trim）。
+ */
+export async function createDeepSeekChatCompletion(
+  messages: DeepSeekChatMessage[],
+  options: DeepSeekChatCompletionOptions = {}
+): Promise<string> {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new DeepSeekPromptError('請先提供對話內容')
+  }
+
+  const apiKey = (options.apiKey ?? DEFAULT_DEEPSEEK_API_KEY).trim()
+  if (!apiKey) {
+    throw new DeepSeekPromptError('未設定 DeepSeek API Key')
+  }
+
+  const request: DeepSeekChatRequest = {
+    model: options.model ?? DEEPSEEK_CHAT_MODEL,
+    messages,
+    temperature: options.temperature ?? 0.7,
+    stream: false,
+    thinking: { type: options.thinking === true ? 'enabled' : 'disabled' }
+  }
+  if (options.responseFormat) {
+    request.response_format = { type: options.responseFormat }
+  }
+
+  const requestOptions = {
+    apiKey,
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    timeoutMs: options.timeoutMs ?? DEEPSEEK_CHAT_TIMEOUT_MS
+  }
+
+  // 部分帳號在 JSON Output 或關閉思考模式下可能回傳空白 content；
+  // 依序退回「無 JSON 模式 → 啟用思考模式」，避免對話直接中斷。
+  const attempts: DeepSeekChatRequest[] = [request]
+  if (request.response_format) {
+    attempts.push({ ...request, response_format: undefined })
+  }
+  attempts.push({
+    ...request,
+    response_format: undefined,
+    thinking: { type: 'enabled' }
+  })
+
+  let lastError: unknown = null
+  for (const attempt of attempts) {
     try {
-      response = await fetchImpl(DEEPSEEK_CHAT_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(buildDeepSeekRequest(trimmed, options.model)),
-        signal: controller.signal
+      return await requestDeepSeekChatCompletion(attempt, {
+        ...requestOptions,
+        emptyContentMessage: 'DeepSeek 未回傳有效的對話內容'
       })
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new DeepSeekPromptError('DeepSeek 回應逾時，請稍後再試')
-      }
-      throw new DeepSeekPromptError('無法連線至 DeepSeek，請檢查網路連線')
+      lastError = err
+      const isEmptyContent =
+        err instanceof DeepSeekPromptError && /未回傳有效的對話內容/.test(err.message)
+      if (!isEmptyContent) throw err
     }
-
-    let body: unknown = null
-    try {
-      body = await response.json()
-    } catch {
-      body = null
-    }
-
-    if (!response.ok) {
-      const apiMessage = (body as DeepSeekChatCompletionResponse | null)?.error?.message
-      const suffix = apiMessage ? `：${apiMessage}` : ''
-      if (response.status === 401) {
-        throw new DeepSeekPromptError(`DeepSeek API Key 無效或已失效${suffix}`)
-      }
-      if (response.status === 429) {
-        throw new DeepSeekPromptError(`DeepSeek 請求過於頻繁，請稍後再試${suffix}`)
-      }
-      throw new DeepSeekPromptError(`DeepSeek 服務回應錯誤（HTTP ${response.status}）${suffix}`)
-    }
-
-    const content = (body as DeepSeekChatCompletionResponse | null)?.choices?.[0]?.message?.content
-    if (!content || !content.trim()) {
-      throw new DeepSeekPromptError('DeepSeek 未回傳有效的提示詞內容')
-    }
-    return content.trim()
-  } finally {
-    clearTimeout(timer)
   }
+
+  if (lastError instanceof DeepSeekPromptError) {
+    throw new DeepSeekPromptError(`${lastError.message}（已自動重試 ${attempts.length} 次）`)
+  }
+  throw new DeepSeekPromptError('DeepSeek 未回傳有效的對話內容')
 }
 
 interface DeepSeekBalanceInfo {

@@ -118,6 +118,41 @@ describe('文生圖模型清單（含手動補充模型）', () => {
     }
   })
 
+  it('多張參考圖：陣列欄位模型會全部帶入', () => {
+    const payload = buildTextToImagePayload(
+      findModel('fal-ai/nano-banana-pro/edit'),
+      {
+        endpointId: 'fal-ai/nano-banana-pro/edit',
+        prompt: 'combine these references',
+        aspectId: '1:1',
+        numImages: 1,
+        outputFormat: 'png'
+      },
+      ['https://fal.media/ref-1.png', 'https://fal.media/ref-2.png']
+    )
+
+    expect(payload.image_urls).toEqual([
+      'https://fal.media/ref-1.png',
+      'https://fal.media/ref-2.png'
+    ])
+  })
+
+  it('多張參考圖：單一欄位模型只使用第一張', () => {
+    const payload = buildTextToImagePayload(
+      findModel('wan/v2.6/text-to-image'),
+      {
+        endpointId: 'wan/v2.6/text-to-image',
+        prompt: 'a cinematic scene',
+        aspectId: '16:9',
+        numImages: 1,
+        outputFormat: 'png'
+      },
+      ['https://fal.media/first.png', 'https://fal.media/second.png']
+    )
+
+    expect(payload.image_url).toBe('https://fal.media/first.png')
+  })
+
   it('分組清單包含 Google 與 Black Forest Labs', () => {
     expect(FAL_TEXT_TO_IMAGE_MODEL_GROUPS).toContain('Google')
     expect(FAL_TEXT_TO_IMAGE_MODEL_GROUPS).toContain('Black Forest Labs')

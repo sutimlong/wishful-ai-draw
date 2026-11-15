@@ -62,7 +62,7 @@ function pickImageSize(
 export function buildTextToImagePayload(
   model: FalModelPreset | undefined,
   request: TextToImageRequest,
-  referenceImageUrl?: string
+  referenceImageUrls?: string | string[]
 ): Record<string, unknown> {
   const unsupported = new Set(model?.unsupportedFields ?? [])
   const promptField = model?.promptField?.trim() || 'prompt'
@@ -87,11 +87,16 @@ export function buildTextToImagePayload(
     payload.seed = request.seed
   }
 
-  // 參考圖：模型有支援的欄位且已上傳時才帶入
-  if (referenceImageUrl && model?.referenceImageField) {
+  // 參考圖：模型有支援的欄位且已上傳時才帶入（陣列欄位可放多張）
+  const referenceUrls = Array.isArray(referenceImageUrls)
+    ? referenceImageUrls.filter(Boolean)
+    : referenceImageUrls
+      ? [referenceImageUrls]
+      : []
+  if (referenceUrls.length > 0 && model?.referenceImageField) {
     payload[model.referenceImageField] = model.isArrayReferenceImage
-      ? [referenceImageUrl]
-      : referenceImageUrl
+      ? referenceUrls
+      : referenceUrls[0]
   }
 
   return payload
@@ -146,7 +151,7 @@ export class TextToImageService {
   public async generate(
     request: TextToImageRequest,
     apiKey: string,
-    referenceImageUrl?: string
+    referenceImageUrls?: string | string[]
   ): Promise<TextToImageExecutionResult> {
     if (!apiKey || !apiKey.trim()) {
       const err = new Error('尚未設定 fal.ai API Key，請先於右上角設定中填入')
@@ -157,7 +162,7 @@ export class TextToImageService {
     this.configureCredentials(apiKey)
 
     const model = FAL_TEXT_TO_IMAGE_MODELS.find((entry) => entry.id === request.endpointId)
-    const payload = buildTextToImagePayload(model, request, referenceImageUrl)
+    const payload = buildTextToImagePayload(model, request, referenceImageUrls)
 
     const result = await fal.subscribe(normalizeEndpointId(request.endpointId), {
       input: payload,

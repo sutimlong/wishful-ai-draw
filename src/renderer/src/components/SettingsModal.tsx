@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { CheckCircle2, FolderOpen, KeyRound, X, FlaskConical } from 'lucide-react'
+import type { OutputDirectories } from '@shared/types'
 import { useBatchStore } from '../store/useBatchStore'
 import { formatDeepSeekAmount } from './DeepSeekBalancePanel'
 
@@ -17,6 +18,7 @@ export const SettingsModal: React.FC = () => {
   const [autoSaveOutput, setAutoSaveOutput] = useState(true)
   const [mockMode, setMockMode] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [outputDirectories, setOutputDirectories] = useState<OutputDirectories | null>(null)
 
   useEffect(() => {
     if (appSettings && isSettingsOpen) {
@@ -28,6 +30,24 @@ export const SettingsModal: React.FC = () => {
       setStatusMessage(null)
     }
   }, [appSettings, isSettingsOpen])
+
+  // 讀取（並確保存在）兩個預設輸出資料夾
+  useEffect(() => {
+    if (!isSettingsOpen) return
+
+    let disposed = false
+    window.electronAPI
+      .getOutputDirectories()
+      .then((directories) => {
+        if (!disposed) setOutputDirectories(directories)
+      })
+      .catch((err) => {
+        console.error('取得預設輸出資料夾失敗：', err)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [isSettingsOpen])
 
   if (!isSettingsOpen) return null
 
@@ -99,7 +119,7 @@ export const SettingsModal: React.FC = () => {
           {/* DeepSeek API Key */}
           <div className="space-y-2">
             <label className="font-semibold text-zinc-200 block">
-              DeepSeek API Key（AI 優化提示詞與餘額查詢）
+              DeepSeek API Key（AI 優化提示詞、對話看圖與餘額查詢）
             </label>
             <input
               type="password"
@@ -144,12 +164,14 @@ export const SettingsModal: React.FC = () => {
             />
           </div>
 
-          {/* Output Directory */}
+          {/* Output Directory（影像風格化） */}
           <div className="space-y-2">
-            <label className="font-semibold text-zinc-200 block">預設輸出資料夾</label>
+            <label className="font-semibold text-zinc-200 block">
+              影像風格化預設輸出資料夾
+            </label>
             <div className="flex gap-2">
               <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-300 truncate">
-                {appSettings?.outputDirectory}
+                {appSettings?.outputDirectory || outputDirectories?.stylize || '載入中…'}
               </div>
               <button
                 onClick={handleSelectDir}
@@ -159,6 +181,36 @@ export const SettingsModal: React.FC = () => {
                 瀏覽...
               </button>
             </div>
+            <p className="text-[11px] text-zinc-500">
+              預設為 <code>圖片 / Wishful_Ai_Draw</code>；每次開始批量生成前仍可選擇其他資料夾。
+            </p>
+          </div>
+
+          {/* Output Directory（文字生成圖片，固定路徑） */}
+          <div className="space-y-2">
+            <label className="font-semibold text-zinc-200 block">
+              文字生成圖片輸出資料夾（固定）
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-300 truncate">
+                {outputDirectories?.textToImage || '載入中…'}
+              </div>
+              <button
+                onClick={() => {
+                  if (outputDirectories) {
+                    window.electronAPI.openPathInExplorer(outputDirectories.textToImage)
+                  }
+                }}
+                disabled={!outputDirectories}
+                className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg flex items-center gap-1.5 shrink-0 disabled:cursor-default disabled:opacity-50"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                開啟
+              </button>
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              生成結果會自動儲存在 <code>圖片 / Wishful_Ai_Draw / 文生圖</code>。
+            </p>
           </div>
 
           {/* Naming Pattern */}
@@ -179,7 +231,7 @@ export const SettingsModal: React.FC = () => {
           {/* Auto Save */}
           <label className="flex items-center justify-between cursor-pointer pt-1">
             <span className="text-zinc-300 font-medium">
-              生成完成後自動下載儲存至輸出資料夾
+              影像風格化完成後自動下載儲存至輸出資料夾
             </span>
             <input
               type="checkbox"

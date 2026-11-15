@@ -6,7 +6,7 @@
 
 **基於 Electron、React 與 TypeScript 打造的企業級 AI 影像批次風格化、文字生圖與影片抽幀桌面工作站**
 
-[![Version](https://img.shields.io/badge/version-0.1.1-f59e0b?style=for-the-badge)](./package.json)
+[![Version](https://img.shields.io/badge/version-0.2.1-f59e0b?style=for-the-badge)](./package.json)
 [![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white)](./electron.vite.config.ts)
 [![React](https://img.shields.io/badge/React-TypeScript-61DAFB?style=for-the-badge&logo=react&logoColor=black)](./src/renderer/src/App.tsx)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-UI-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](./tailwind.config.js)
@@ -86,6 +86,8 @@
 * **179 個可用模型**：整合 `167` 個自動同步模型目錄與 `12` 個精選支援參考圖編輯的模型（以 `★` 標記，如 `nano-banana-pro/edit`、`flux-3/edit-image`、`seedream`、`gpt-image-2/edit`、`kling-image/o1`、`vidu`、`bria/fibo-2/edit` 等，預設模型為 `google/nano-banana-2.1`）。
 * **多參考圖與版面參數**：支援上傳最多 **10 張參考圖** (`MAX_REFERENCE_IMAGES = 10`)，提供 5 種常用畫幅比例：
   * `1:1` (`1024×1024`) · `16:9` (`1344×768`) · `9:16` (`768×1344`) · `4:3` (`1152×896`) · `3:4` (`896×1152`)
+* **提示詞模式／對話模式**：同一頁可切換兩種工作流程。對話模式由 **DeepSeek Flash (`deepseek-flash`)** 驅動，支援視覺輸入（看圖）、繁體中文討論、模型推薦與提示詞整理；當需求明確時，DeepSeek 會直接把生圖任務交接給 **fal.ai** 指定模型，並將結果帶回對話。使用者在對話模式也能先用與提示詞模式相同的下拉選單指定模型。
+* **對話附件雙用途**：在對話框上傳的圖片可透過「看圖」提供給 DeepSeek 視覺理解，也可透過「參考」作為 fal.ai 生成參考圖（可同時開啟）；對話中較早的參考圖會保留給後續生成使用。
 * **彈性生成與畫廊管理**：支援單次產出 `1` / `2` / `4` 張圖、切換 `png` / `jpeg` 格式與內建風格預設模板；產出結果自動保存至 `<Pictures>/Wishful_Ai_Draw/文生圖`，並支援燈箱預覽與「另存新檔」。
 
 ---
@@ -243,7 +245,8 @@ flowchart LR
 ```
 ~/Pictures/
 └── Wishful_Ai_Draw/        ← 影像風格化預設輸出資料夾
-    └── 文生圖/             ← 文字生成圖片固定輸出資料夾
+    ├── 文生圖/             ← 文字生成圖片固定輸出資料夾
+    └── 文生影片/           ← 文字生成影片輸出資料夾
 ```
 
 - 頂部工具列（TopBar）會依目前頁面顯示對應的輸出資料夾：

@@ -5,16 +5,24 @@ import {
   ImagePlus,
   Layers,
   Loader2,
+  MessageSquareText,
   Palette,
+  PenLine,
   Sparkles,
   Wand2,
   X
 } from 'lucide-react'
 import { FAL_TEXT_TO_IMAGE_MODELS } from '@shared/falTextToImageModels'
-import { describeModelPricing, estimateBatchCostUsd, formatModelPriceTag } from '@shared/falPricing'
+import { estimateBatchCostUsd } from '@shared/falPricing'
 import { formatUsd } from '../utils/cost'
-import { buildModelGroups, hasModelSearchResults } from '../utils/modelOptions'
+import {
+  ASPECT_RATIOS,
+  MAX_REFERENCE_IMAGES,
+  type TextToImageOutputFormat
+} from '../utils/textToImageOptions'
 import type { BatchItem, TextToImageAspect, TextToImageFileEntry } from '@shared/types'
+import { TextToImageSettingsFields } from './TextToImageSettingsFields'
+import { TextToImageChat } from './TextToImageChat'
 
 /** 常用風格預設：點選後把對應英文描述附加到提示詞後方 */
 const STYLE_PRESETS: { id: string; label: string; suffix: string }[] = [
@@ -47,18 +55,6 @@ const STYLE_PRESETS: { id: string; label: string; suffix: string }[] = [
   }
 ]
 
-/** 畫面比例選項（實際像素為 fal.ai 常見的可整除尺寸） */
-const ASPECT_RATIOS: { id: TextToImageAspect; label: string; hint: string; width: number; height: number }[] = [
-  { id: '1:1', label: '1:1', hint: '1024 × 1024 方形', width: 1024, height: 1024 },
-  { id: '16:9', label: '16:9', hint: '1344 × 768 寬幅', width: 1344, height: 768 },
-  { id: '9:16', label: '9:16', hint: '768 × 1344 直式', width: 768, height: 1344 },
-  { id: '4:3', label: '4:3', hint: '1152 × 896 橫式', width: 1152, height: 896 },
-  { id: '3:4', label: '3:4', hint: '896 × 1152 直立', width: 896, height: 1152 }
-]
-
-const IMAGE_COUNTS = [1, 2, 4] as const
-const OUTPUT_FORMATS = ['png', 'jpeg'] as const
-
 /** 預設選用的文生圖模型：Nano Banana 2.1（Google，支援多種比例與 4K） */
 function resolveDefaultEndpoint(): string {
   const prefer = 'google/nano-banana-2.1'
@@ -66,14 +62,16 @@ function resolveDefaultEndpoint(): string {
   return FAL_TEXT_TO_IMAGE_MODELS[0]?.id ?? ''
 }
 
+type TextToImageMode = 'prompt' | 'chat'
+
 export const TextToImagePage: React.FC = () => {
+  const [mode, setMode] = useState<TextToImageMode>('prompt')
   const [prompt, setPrompt] = useState('')
   const [styleId, setStyleId] = useState<string | null>(null)
   const [endpointId, setEndpointId] = useState<string>(() => resolveDefaultEndpoint())
-  const [modelQuery, setModelQuery] = useState('')
   const [aspectId, setAspectId] = useState<TextToImageAspect>(ASPECT_RATIOS[0].id)
   const [imageCount, setImageCount] = useState<number>(1)
-  const [outputFormat, setOutputFormat] = useState<(typeof OUTPUT_FORMATS)[number]>('png')
+  const [outputFormat, setOutputFormat] = useState<TextToImageOutputFormat>('png')
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [optimizeError, setOptimizeError] = useState<string | null>(null)
   const [optimizeNotice, setOptimizeNotice] = useState<string | null>(null)
@@ -84,21 +82,22 @@ export const TextToImagePage: React.FC = () => {
   const [previewImage, setPreviewImage] = useState<TextToImageFileEntry | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null)
-  const [referenceImage, setReferenceImage] = useState<BatchItem | null>(null)
+  const [referenceImages, setReferenceImages] = useState<BatchItem[]>([])
 
   const selectedModel = useMemo(
     () => FAL_TEXT_TO_IMAGE_MODELS.find((model) => model.id === endpointId),
     [endpointId]
   )
   const selectedAspect = ASPECT_RATIOS.find((ratio) => ratio.id === aspectId) ?? ASPECT_RATIOS[0]
-  const modelGroups = useMemo(
-    () => buildModelGroups(FAL_TEXT_TO_IMAGE_MODELS, modelQuery, endpointId),
-    [modelQuery, endpointId]
-  )
   const trimmedPrompt = prompt.trim()
   const canOptimize = trimmedPrompt.length > 0 && !isOptimizing
-  const referenceUnsupported = Boolean(referenceImage) && !selectedModel?.referenceImageField
-  const referenceRequiredMissing = Boolean(selectedModel?.requiresReferenceImage) && !referenceImage
+  // 陣列欄位模型可放多張；單一欄位模型只接受 1 張
+  const referenceLimit = selectedModel?.isArrayReferenceImage ? MAX_REFERENCE_IMAGES : 1
+  const referenceUnsupported =
+    referenceImages.length > 0 && !selectedModel?.referenceImageField
+  const referenceRequiredMissing =
+    Boolean(selectedModel?.requiresReferenceImage) && referenceImages.length === 0
+  const referenceOverLimit = referenceImages.length > referenceLimit
   const canGenerate =
     trimmedPrompt.length > 0 && !isGenerating && !referenceUnsupported && !referenceRequiredMissing
   const generateDisabledReason = isGenerating
@@ -197,7 +196,7 @@ export const TextToImagePage: React.FC = () => {
         aspectId,
         numImages: imageCount,
         outputFormat,
-        referenceImageFilePath: referenceImage?.sourceFilePath
+        referenceImageFilePaths: referenceImages.map((image) => image.sourceFilePath)
       })
       if (result.ok) {
         // 生成後重新讀取「文生圖」資料夾，顯示包含舊結果在內的所有圖片
@@ -214,12 +213,26 @@ export const TextToImagePage: React.FC = () => {
   }
 
   const handleSelectReference = async (): Promise<void> => {
-    const item = await window.electronAPI.selectReferenceImage()
-    if (item) setReferenceImage(item)
+    const items = await window.electronAPI.selectReferenceImages()
+    if (items.length === 0) return
+
+    setReferenceImages((prev) => {
+      // 單一欄位模型只保留 1 張（新選的圖取代舊圖）
+      if (!selectedModel?.isArrayReferenceImage) {
+        return [items[0]]
+      }
+      const merged = [...prev]
+      for (const item of items) {
+        if (merged.some((existing) => existing.sourceFilePath === item.sourceFilePath)) continue
+        if (merged.length >= MAX_REFERENCE_IMAGES) break
+        merged.push(item)
+      }
+      return merged
+    })
   }
 
-  const handleRemoveReference = (): void => {
-    setReferenceImage(null)
+  const handleRemoveReference = (index: number): void => {
+    setReferenceImages((prev) => prev.filter((_, i) => i !== index))
   }
 
   const handleDownload = async (image: TextToImageFileEntry): Promise<void> => {
@@ -243,7 +256,7 @@ export const TextToImagePage: React.FC = () => {
   return (
     <main className="flex-1 overflow-y-auto bg-zinc-950">
       <div className="mx-auto w-full max-w-6xl px-6 py-7 space-y-6">
-        {/* 頁面標題 */}
+        {/* 頁面標題與模式切換 */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-fuchsia-500/15 border border-indigo-500/30 text-indigo-300">
@@ -252,12 +265,49 @@ export const TextToImagePage: React.FC = () => {
             <div>
               <h1 className="text-lg font-bold tracking-tight text-white">文字生成圖片</h1>
               <p className="mt-0.5 text-xs text-zinc-400">
-                輸入提示詞即可從零生成全新圖片，不需要先準備素材圖。
+                {mode === 'prompt'
+                  ? '輸入提示詞即可從零生成全新圖片，不需要先準備素材圖。'
+                  : '先和 DeepSeek 討論想法、上傳參考圖，確認後由 AI 選擇模型並交給 fal.ai 生成。'}
               </p>
             </div>
           </div>
+
+          {/* Prompt / Chat 模式切換 */}
+          <div
+            aria-label="文字生成圖片模式切換"
+            className="flex shrink-0 items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/70 p-1"
+          >
+            <button
+              onClick={() => setMode('prompt')}
+              aria-pressed={mode === 'prompt'}
+              title="使用提示詞直接生成圖片"
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                mode === 'prompt'
+                  ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-950/30'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <PenLine className="h-3.5 w-3.5" />
+              提示詞模式
+            </button>
+            <button
+              onClick={() => setMode('chat')}
+              aria-pressed={mode === 'chat'}
+              title="與 DeepSeek 討論後自動交接 fal.ai 生成"
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                mode === 'chat'
+                  ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-950/30'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+              對話模式
+            </button>
+          </div>
         </div>
 
+        {/* 提示詞模式（保留原本的工作流程，切到對話模式時僅隱藏） */}
+        <div className={mode === 'prompt' ? 'space-y-6' : 'hidden'}>
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           {/* 左側：提示詞與風格 */}
           <section className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -302,38 +352,71 @@ export const TextToImagePage: React.FC = () => {
 
             {/* 參考圖（選用） */}
             <div className="space-y-2 border-t border-zinc-800/80 pt-4">
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <ImagePlus className="h-3.5 w-3.5 text-indigo-400" />
-                參考圖（選用）
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  <ImagePlus className="h-3.5 w-3.5 text-indigo-400" />
+                  參考圖（選用）
+                </div>
+                {referenceImages.length > 0 && (
+                  <span className="text-[11px] text-zinc-500">
+                    {referenceImages.length} / {referenceLimit} 張
+                  </span>
+                )}
               </div>
 
-              {referenceImage ? (
-                <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-2.5">
-                  <img
-                    src={referenceImage.sourcePreviewUrl}
-                    alt="參考圖預覽"
-                    className="h-16 w-16 shrink-0 rounded-lg object-cover"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs text-zinc-200">{referenceImage.sourceFileName}</p>
-                    <p className="text-[11px] text-zinc-500">AI 會參考這張圖生成新圖片</p>
-                  </div>
-                  <button
-                    onClick={handleRemoveReference}
-                    title="移除參考圖"
-                    className="p-1.5 rounded-md text-zinc-500 hover:text-rose-300 hover:bg-rose-500/10 transition"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+              {referenceImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {referenceImages.map((image, index) => (
+                    <div
+                      key={image.sourceFilePath}
+                      title={image.sourceFileName}
+                      className="group relative h-20 w-20 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+                    >
+                      <img
+                        src={image.sourcePreviewUrl}
+                        alt={`參考圖 ${index + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                      <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[9px] font-semibold text-zinc-200">
+                        {index + 1}
+                      </span>
+                      <button
+                        onClick={() => handleRemoveReference(index)}
+                        title="移除參考圖"
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/70 text-zinc-300 opacity-0 transition hover:bg-rose-500/80 hover:text-white group-hover:opacity-100"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ) : (
+              )}
+
+              {referenceImages.length < referenceLimit ? (
                 <button
                   onClick={handleSelectReference}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 bg-zinc-950/50 px-3 py-3 text-xs text-zinc-400 transition hover:border-indigo-500 hover:text-indigo-200"
                 >
                   <ImagePlus className="h-4 w-4" />
-                  加入參考圖
+                  {referenceImages.length === 0
+                    ? selectedModel?.isArrayReferenceImage
+                      ? '加入參考圖（可多選）'
+                      : '加入參考圖'
+                    : '再加入參考圖'}
                 </button>
+              ) : (
+                <p className="text-[11px] text-zinc-600">
+                  {selectedModel?.isArrayReferenceImage
+                    ? `已達上限 ${MAX_REFERENCE_IMAGES} 張`
+                    : '此模型僅支援 1 張參考圖，若要更換請先移除'}
+                </p>
+              )}
+
+              {referenceImages.length > 0 && (
+                <p className="text-[11px] text-zinc-600">
+                  AI 會參考這 {referenceImages.length} 張圖生成新圖片
+                  {referenceOverLimit ? '（此模型僅支援 1 張，將只使用第 1 張）' : ''}
+                </p>
               )}
 
               {referenceUnsupported && (
@@ -344,7 +427,7 @@ export const TextToImagePage: React.FC = () => {
 
               {referenceRequiredMissing && (
                 <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
-                  此模型必須提供參考圖才能生成，請先加入一張參考圖。
+                  此模型必須提供參考圖才能生成，請先加入參考圖。
                 </p>
               )}
             </div>
@@ -411,107 +494,18 @@ export const TextToImagePage: React.FC = () => {
               生成參數
             </div>
 
-            {/* 模型選擇 */}
-            <div className="space-y-2">
-              <label htmlFor="text-to-image-model" className="text-[11px] text-zinc-400">
-                AI 模型（{FAL_TEXT_TO_IMAGE_MODELS.length} 個 fal.ai 文生圖模型）
-              </label>
-              <input
-                type="text"
-                value={modelQuery}
-                onChange={(e) => setModelQuery(e.target.value)}
-                placeholder="搜尋模型名稱 / 端點 / 實驗室"
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-[11px] text-zinc-200 placeholder-zinc-600 outline-none focus:border-indigo-500"
-              />
-              <select
-                id="text-to-image-model"
-                value={endpointId}
-                onChange={(e) => setEndpointId(e.target.value)}
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2 text-xs text-zinc-100 outline-none focus:border-indigo-500"
-              >
-                {modelGroups.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                        {model.referenceImageField && !model.name.includes('可參考圖')
-                          ? '（可參考圖）'
-                          : ''}{' '}
-                        — {formatModelPriceTag(model.pricing)}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              {!hasModelSearchResults(modelGroups) && (
-                <p className="text-[11px] text-zinc-500">沒有符合「{modelQuery}」的模型</p>
-              )}
-              <p className="text-[11px] text-zinc-600">
-                一張圖片預估：{describeModelPricing(selectedModel?.pricing)}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-[11px] text-zinc-400">畫面比例</span>
-              <div className="grid grid-cols-5 gap-1.5">
-                {ASPECT_RATIOS.map((ratio) => (
-                  <button
-                    key={ratio.id}
-                    onClick={() => setAspectId(ratio.id)}
-                    aria-pressed={aspectId === ratio.id}
-                    title={ratio.hint}
-                    className={`rounded-lg border py-1.5 text-[11px] font-semibold transition ${
-                      aspectId === ratio.id
-                        ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
-                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {ratio.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-zinc-600">{selectedAspect.hint}</p>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-[11px] text-zinc-400">生成張數</span>
-              <div className="grid grid-cols-3 gap-1.5">
-                {IMAGE_COUNTS.map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => setImageCount(count)}
-                    aria-pressed={imageCount === count}
-                    className={`rounded-lg border py-1.5 text-[11px] font-semibold transition ${
-                      imageCount === count
-                        ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
-                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {count} 張
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="text-to-image-format" className="text-[11px] text-zinc-400">
-                輸出格式
-              </label>
-              <select
-                id="text-to-image-format"
-                value={outputFormat}
-                onChange={(e) =>
-                  setOutputFormat(e.target.value as (typeof OUTPUT_FORMATS)[number])
-                }
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-indigo-500"
-              >
-                {OUTPUT_FORMATS.map((format) => (
-                  <option key={format} value={format}>
-                    {format.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <TextToImageSettingsFields
+              idPrefix="text-to-image"
+              endpointId={endpointId}
+              onEndpointIdChange={setEndpointId}
+              aspectId={aspectId}
+              onAspectIdChange={setAspectId}
+              imageCount={imageCount}
+              onImageCountChange={setImageCount}
+              outputFormat={outputFormat}
+              onOutputFormatChange={setOutputFormat}
+              selectedModel={selectedModel}
+            />
 
             <button
               onClick={handleGenerate}
@@ -632,6 +626,25 @@ export const TextToImagePage: React.FC = () => {
             {downloadNotice}
           </p>
         )}
+        </div>
+
+        {/* 對話模式：與 DeepSeek 討論後交接 fal.ai 生成 */}
+        <div className={mode === 'chat' ? '' : 'hidden'}>
+          <TextToImageChat
+            isActive={mode === 'chat'}
+            endpointId={endpointId}
+            onEndpointIdChange={setEndpointId}
+            aspectId={aspectId}
+            onAspectIdChange={setAspectId}
+            imageCount={imageCount}
+            onImageCountChange={setImageCount}
+            outputFormat={outputFormat}
+            onOutputFormatChange={setOutputFormat}
+            selectedModel={selectedModel}
+            onImagesGenerated={refreshOutputs}
+            onPreviewImage={setPreviewImage}
+          />
+        </div>
       </div>
 
       {/* 放大預覽 Lightbox */}

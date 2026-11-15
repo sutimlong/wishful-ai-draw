@@ -1,6 +1,6 @@
 {
   "name": "wishful-ai-draw",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "description": "Batch AI Image Generation Desktop App powered by Electron and fal.ai",
   "main": "./out/main/index.js",
   "author": "Wishful AI",
@@ -18,7 +18,9 @@
     "build:win": "npm run build && electron-builder --win",
     "sync:fal-models": "node scripts/sync-fal-models.mjs",
     "sync:fal-text-to-image": "node scripts/sync-fal-text-to-image.mjs",
-    "sync:fal": "npm run sync:fal-models && npm run sync:fal-text-to-image",
+    "sync:fal-text-to-video": "node scripts/sync-fal-text-to-video.mjs",
+    "sync:fal-image-to-video": "node scripts/sync-fal-image-to-video.mjs",
+    "sync:fal": "npm run sync:fal-models && npm run sync:fal-text-to-image && npm run sync:fal-text-to-video && npm run sync:fal-image-to-video",
     "test": "vitest run"
   },
   "dependencies": {

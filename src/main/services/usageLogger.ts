@@ -4,6 +4,8 @@ import { BatchItem, GenerationConfig, UsageCostInfo, UsageRecord } from '../../s
 export const USAGE_EVENT_IMAGE_GENERATED = 'image_generated'
 /** 使用記錄事件名稱：模擬模式（不產生 fal.ai 費用） */
 export const USAGE_EVENT_IMAGE_GENERATED_SIM = 'image_generated_SIM'
+/** 使用記錄事件名稱：文字生成影片 */
+export const USAGE_EVENT_VIDEO_GENERATED = 'video_generated'
 /** 使用記錄事件名稱：AI 優化提示詞（DeepSeek） */
 export const USAGE_EVENT_PROMPT_OPTIMIZATION = 'Prompt word_optimization'
 
@@ -172,6 +174,42 @@ export class UsageLogger {
     costIsEstimated?: boolean
     status?: string
   }): void {
+    this.appendMediaGeneratedRecord(USAGE_EVENT_IMAGE_GENERATED, input, '圖片')
+  }
+
+  /** 文字生成影片完成時呼叫：每支成功影片追加一列（事件 `video_generated`） */
+  public recordTextToVideoGenerated(input: {
+    endpointId: string
+    sourceFileName: string
+    costUsd?: number
+    costIsEstimated?: boolean
+    status?: string
+  }): void {
+    this.appendMediaGeneratedRecord(USAGE_EVENT_VIDEO_GENERATED, input, '影片')
+  }
+
+  /** 圖片生成影片完成時呼叫：每支成功影片追加一列（事件 `video_generated`） */
+  public recordImageToVideoGenerated(input: {
+    endpointId: string
+    sourceFileName: string
+    costUsd?: number
+    costIsEstimated?: boolean
+    status?: string
+  }): void {
+    this.appendMediaGeneratedRecord(USAGE_EVENT_VIDEO_GENERATED, input, '圖生影片')
+  }
+
+  private appendMediaGeneratedRecord(
+    eventType: typeof USAGE_EVENT_IMAGE_GENERATED | typeof USAGE_EVENT_VIDEO_GENERATED,
+    input: {
+      endpointId: string
+      sourceFileName: string
+      costUsd?: number
+      costIsEstimated?: boolean
+      status?: string
+    },
+    mediaLabel: string
+  ): void {
     const sheets = this.deps.sheets
     if (!sheets) return
     const user = this.deps.getCurrentUser()
@@ -181,7 +219,7 @@ export class UsageLogger {
       timestamp: Date.now(),
       userEmail: user.email,
       userName: user.name,
-      eventType: USAGE_EVENT_IMAGE_GENERATED,
+      eventType,
       sourceFileName: input.sourceFileName,
       endpointId: input.endpointId,
       imageCount: 1,
@@ -194,7 +232,7 @@ export class UsageLogger {
     void sheets
       .appendUsageRow(record)
       .catch((err) => {
-        console.error('寫入 Google 文字生成圖片記錄失敗：', err)
+        console.error(`寫入 Google 文字生成${mediaLabel}記錄失敗：`, err)
       })
   }
 

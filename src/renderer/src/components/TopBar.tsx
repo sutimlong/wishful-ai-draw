@@ -3,15 +3,17 @@ import {
   Brush,
   CheckCircle2,
   FolderOpen,
+  ImagePlay,
   KeyRound,
   LogOut,
   Settings,
+  Settings2,
   FlaskConical,
-  ExternalLink,
   Type,
+  Video,
   Wallet
 } from 'lucide-react'
-import type { AuthUser } from '@shared/types'
+import type { AuthUser, OutputDirectories } from '@shared/types'
 import { isAdminRole, normalizeRoleLabel } from '@shared/userRole'
 import { useBatchStore } from '../store/useBatchStore'
 import { useAuthStore } from '../store/useAuthStore'
@@ -47,11 +49,38 @@ const UserAvatar: React.FC<{ user: AuthUser }> = ({ user }) => {
 /** 頁面切換按鈕使用的圖示 */
 const VIEW_ICONS: Record<AppView, React.FC<{ className?: string }>> = {
   stylize: Brush,
-  'text-to-image': Type
+  'text-to-image': Type,
+  'text-to-video': Video,
+  'image-to-video': ImagePlay
+}
+
+/** 依目前分頁決定輸出資料夾實際路徑 */
+export function resolveActiveOutputDirectory(
+  activeView: AppView,
+  customStylizeDirectory: string | undefined,
+  directories: OutputDirectories | null | undefined
+): string {
+  if (activeView === 'stylize') {
+    return customStylizeDirectory || directories?.stylize || ''
+  }
+  if (activeView === 'text-to-video') {
+    return directories?.textToVideo || ''
+  }
+  if (activeView === 'image-to-video') {
+    return directories?.imageToVideo || ''
+  }
+  return directories?.textToImage || ''
+}
+
+/** 依目前分頁決定 TopBar 輸出資料夾顯示標籤 */
+export function getOutputDirectoryLabel(activeView: AppView): string {
+  if (activeView === 'stylize') return '風格化輸出'
+  if (activeView === 'text-to-video') return '文生影片輸出'
+  if (activeView === 'image-to-video') return '圖生影片輸出'
+  return '文生圖輸出'
 }
 
 export const TopBar: React.FC = () => {
-  const items = useBatchStore((s) => s.items)
   const appSettings = useBatchStore((s) => s.appSettings)
   const setSettingsOpen = useBatchStore((s) => s.setSettingsOpen)
   const updateAppSettings = useBatchStore((s) => s.updateAppSettings)
@@ -63,25 +92,61 @@ export const TopBar: React.FC = () => {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
 
+  // 預設輸出資料夾（由 main process 建立並回傳，切換頁面時顯示對應資料夾）
+  const [outputDirectories, setOutputDirectories] = React.useState<OutputDirectories | null>(null)
+
+  React.useEffect(() => {
+    let disposed = false
+    window.electronAPI
+      .getOutputDirectories()
+      .then((directories) => {
+        if (!disposed) setOutputDirectories(directories)
+      })
+      .catch((err) => {
+        console.error('取得預設輸出資料夾失敗：', err)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [])
+
   // 使用者身份（讀自 Google 試算表「工作表3」B 欄；管理員以金色顯示）
   const roleLabel = user ? normalizeRoleLabel(user.role) : ''
   const isAdmin = isAdminRole(user?.role)
 
-  const totalCount = items.length
-  const completedCount = items.filter((i) => i.status === 'completed').length
-  const activeCount = items.filter(
-    (i) => i.status === 'uploading' || i.status === 'queued' || i.status === 'processing'
-  ).length
-  const failedCount = items.filter((i) => i.status === 'failed').length
+  // 影像風格化使用可自訂的輸出目錄（預設為「圖片 / Wishful_Ai_Draw」）；
+  // 文字生成圖片固定儲存於「圖片 / Wishful_Ai_Draw / 文生圖」
+  const stylizeOutputDirectory = appSettings?.outputDirectory || outputDirectories?.stylize || ''
+  const activeOutputDirectory = resolveActiveOutputDirectory(
+    activeView,
+    appSettings?.outputDirectory,
+    outputDirectories
+  )
+  const activeOutputFolderName = activeOutputDirectory
+    ? activeOutputDirectory.split(/[/\\]/).pop() || activeOutputDirectory
+    : ''
+  const outputDirectoryLabel = getOutputDirectoryLabel(activeView)
 
-  const handleOpenOutputFolder = (): void => {
-    if (appSettings?.outputDirectory) {
-      window.electronAPI.openPathInExplorer(appSettings.outputDirectory)
+  const handleOpenOutputFolder = async (): Promise<void> => {
+    try {
+      // 點擊時重新確認資料夾存在（使用者可能在 App 執行期間手動刪除）
+      const directories = await window.electronAPI.getOutputDirectories()
+      setOutputDirectories(directories)
+      const target = resolveActiveOutputDirectory(
+        activeView,
+        appSettings?.outputDirectory,
+        directories
+      )
+      if (target) {
+        window.electronAPI.openPathInExplorer(target)
+      }
+    } catch (err) {
+      console.error('開啟輸出資料夾失敗：', err)
     }
   }
 
   const handleChangeOutputFolder = async (): Promise<void> => {
-    const dir = await window.electronAPI.selectOutputDirectory(appSettings?.outputDirectory)
+    const dir = await window.electronAPI.selectOutputDirectory(stylizeOutputDirectory || undefined)
     if (dir) {
       await updateAppSettings({ outputDirectory: dir })
     }
@@ -97,8 +162,8 @@ export const TopBar: React.FC = () => {
   }
 
   return (
-    <header className="h-14 shrink-0 bg-zinc-950 border-b border-zinc-800/80 px-4 flex items-center justify-between">
-      {/* Left: Brand + Task Counters */}
+    <header className="h-14 shrink-0 bg-zinc-950 border-b border-zinc-800/80 px-4 flex items-center justify-between gap-3">
+      {/* Left: Brand + Page Tabs */}
       <div className="flex items-center gap-4 min-w-0">
         <div className="flex items-center gap-2.5 shrink-0">
           <img
@@ -144,70 +209,66 @@ export const TopBar: React.FC = () => {
             )
           })}
         </nav>
-
-        {/* 批次任務統計僅與影像風格化頁面有關，切換到文字生成圖片時隱藏 */}
-        {activeView === 'stylize' && (
-          <>
-            <div className="h-4 w-px bg-zinc-800" />
-
-            {/* Task stats badges */}
-            <div className="hidden xl:flex shrink-0 items-center gap-2 text-xs whitespace-nowrap">
-              <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
-                總數 <strong className="text-white ml-1">{totalCount}</strong>
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-emerald-950/40 border border-emerald-500/30 text-emerald-300">
-                完成 <strong className="ml-1">{completedCount}</strong>
-              </span>
-              <span className="px-2.5 py-1 rounded-md bg-indigo-950/40 border border-indigo-500/30 text-indigo-300">
-                處理中 <strong className="ml-1">{activeCount}</strong>
-              </span>
-              {failedCount > 0 && (
-                <span className="px-2.5 py-1 rounded-md bg-rose-950/40 border border-rose-500/30 text-rose-300">
-                  失敗 <strong className="ml-1">{failedCount}</strong>
-                </span>
-              )}
-            </div>
-          </>
-        )}
       </div>
 
       {/* Right: Mock Mode Toggle, Output Dir, API Key Status, Settings */}
-      <div className="flex items-center gap-2.5">
-        {/* Mock Mode Quick Toggle */}
+      <div className="flex shrink-0 items-center gap-2.5">
+        {/* Mock Mode Quick Toggle：1700px 以上顯示；1900px 以下只顯示圖示，避免擠壓其他按鈕 */}
         <button
           onClick={() => updateAppSettings({ mockMode: !appSettings?.mockMode })}
-          title="開啟後可不消耗 fal.ai API 點數進行本地模擬批量測試"
-          className={`hidden min-[1700px]:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+          role="switch"
+          aria-checked={Boolean(appSettings?.mockMode)}
+          aria-label="切換模擬測試模式"
+          title={
+            appSettings?.mockMode
+              ? '模擬測試模式已開啟（點擊關閉）'
+              : '模擬模式已關閉（點擊開啟，不消耗 fal.ai API 點數）'
+          }
+          className={`relative hidden h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition min-[1700px]:flex ${
             appSettings?.mockMode
               ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
               : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <FlaskConical className="w-3.5 h-3.5" />
-          {appSettings?.mockMode ? '模擬測試模式 (ON)' : '模擬模式 (OFF)'}
+          <FlaskConical className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-[1900px]:hidden">模擬</span>
+          <span className="hidden min-[1900px]:inline">
+            {appSettings?.mockMode ? '模擬測試模式 (ON)' : '模擬模式 (OFF)'}
+          </span>
+          {appSettings?.mockMode && (
+            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400 min-[1900px]:hidden" />
+          )}
         </button>
 
-        {/* Output Directory Pill */}
-        <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden text-xs">
-          <button
-            onClick={handleChangeOutputFolder}
-            title={`點擊更換輸出目錄：${appSettings?.outputDirectory || ''}`}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-zinc-300 hover:bg-zinc-800 transition max-w-[200px]"
-          >
-            <FolderOpen className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-            <span className="hidden min-[1600px]:inline truncate">
-              {appSettings?.outputDirectory
-                ? appSettings.outputDirectory.split(/[/\\]/).pop() || appSettings.outputDirectory
-                : '選擇輸出資料夾'}
-            </span>
-          </button>
+        {/* Output Directory Pill：依目前頁面顯示對應的儲存資料夾 */}
+        <div className="flex shrink-0 items-center overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-xs">
           <button
             onClick={handleOpenOutputFolder}
-            title="在 Finder / 檔案總管開啟輸出資料夾"
-            className="px-2 py-1.5 border-l border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+            disabled={!activeOutputDirectory}
+            title={
+              activeOutputDirectory
+                ? `在 Finder 開啟：${activeOutputDirectory}`
+                : '輸出資料夾準備中'
+            }
+            className="flex max-w-[240px] items-center gap-1.5 px-2.5 py-1.5 text-zinc-300 transition hover:bg-zinc-800 disabled:cursor-default"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+            <span className="whitespace-nowrap text-[10px] text-zinc-500">
+              {outputDirectoryLabel}
+            </span>
+            <span className="truncate font-medium text-zinc-200">
+              {activeOutputFolderName || '…'}
+            </span>
           </button>
+          {activeView === 'stylize' && (
+            <button
+              onClick={handleChangeOutputFolder}
+              title="更換影像風格化的輸出資料夾（預設：圖片 / Wishful_Ai_Draw）"
+              className="border-l border-zinc-800 px-2 py-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
         {/* DeepSeek 餘額 + API Key */}

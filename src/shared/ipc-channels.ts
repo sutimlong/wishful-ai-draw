@@ -13,10 +13,11 @@ export const IPC_CHANNELS = {
   EVENT_AUTH_CHANGED: 'auth:changed',
 
   FILE_SELECT_IMAGES: 'file:select-images',
-  FILE_SELECT_REFERENCE_IMAGE: 'file:select-reference-image',
+  FILE_SELECT_REFERENCE_IMAGES: 'file:select-reference-images',
   FILE_SELECT_FOLDER: 'file:select-folder',
   FILE_SCAN_PATHS: 'file:scan-paths',
   FILE_SELECT_OUTPUT_DIR: 'file:select-output-dir',
+  FILE_GET_OUTPUT_DIRECTORIES: 'file:get-output-directories',
   FILE_OPEN_PATH: 'file:open-path',
 
   BATCH_START: 'batch:start',
@@ -27,10 +28,23 @@ export const IPC_CHANNELS = {
   BATCH_SET_CONCURRENCY: 'batch:set-concurrency',
 
   TEXT_TO_IMAGE_GENERATE: 'text-to-image:generate',
+  TEXT_TO_IMAGE_CHAT: 'text-to-image:chat',
   TEXT_TO_IMAGE_DOWNLOAD: 'text-to-image:download',
   TEXT_TO_IMAGE_LIST_OUTPUTS: 'text-to-image:list-outputs',
   TEXT_TO_IMAGE_COPY_TO_DOWNLOADS: 'text-to-image:copy-to-downloads',
   TEXT_TO_IMAGE_SAVE_AS: 'text-to-image:save-as',
+
+  TEXT_TO_VIDEO_GENERATE: 'text-to-video:generate',
+  TEXT_TO_VIDEO_CHAT: 'text-to-video:chat',
+  TEXT_TO_VIDEO_LIST_OUTPUTS: 'text-to-video:list-outputs',
+  TEXT_TO_VIDEO_COPY_TO_DOWNLOADS: 'text-to-video:copy-to-downloads',
+  TEXT_TO_VIDEO_SAVE_AS: 'text-to-video:save-as',
+
+  IMAGE_TO_VIDEO_GENERATE: 'image-to-video:generate',
+  IMAGE_TO_VIDEO_CHAT: 'image-to-video:chat',
+  IMAGE_TO_VIDEO_LIST_OUTPUTS: 'image-to-video:list-outputs',
+  IMAGE_TO_VIDEO_COPY_TO_DOWNLOADS: 'image-to-video:copy-to-downloads',
+  IMAGE_TO_VIDEO_SAVE_AS: 'image-to-video:save-as',
 
   EVENT_BATCH_ITEM_UPDATED: 'batch:item-updated',
   EVENT_BATCH_QUEUE_STATUS: 'batch:queue-status',

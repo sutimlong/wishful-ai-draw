@@ -4,6 +4,7 @@ import { join } from 'path'
 import { AppSettings } from '../../shared/types'
 import { clampConcurrency } from '../../shared/concurrency'
 import { DEFAULT_DEEPSEEK_API_KEY } from './deepSeekService'
+import { ensureOutputDirectories, getOutputRootDirectory } from './outputDirectories'
 
 /**
  * 預設內建的 fal.ai API Key。
@@ -15,9 +16,9 @@ import { DEFAULT_DEEPSEEK_API_KEY } from './deepSeekService'
 export const DEFAULT_FAL_API_KEY =
   'fal_sk_5ad4131fb4914abdaa423486c2b18bff:0bb932aed4ce1d4dd1acd80f19677e8b'
 
-/** 預設輸出資料夾：Mac「圖片 / Wishful_Ai_Draw」 */
+/** 預設輸出資料夾：Mac「圖片 / Wishful_Ai_Draw」（由 outputDirectories 統一管理） */
 function getDefaultOutputDirectory(): string {
-  return join(app.getPath('pictures'), 'Wishful_Ai_Draw')
+  return getOutputRootDirectory()
 }
 
 interface PersistedSettings {
@@ -46,13 +47,8 @@ class SettingsStore {
   constructor() {
     const userDataDir = app.getPath('userData')
     const defaultOutputDir = getDefaultOutputDirectory()
-    if (!existsSync(defaultOutputDir)) {
-      try {
-        mkdirSync(defaultOutputDir, { recursive: true })
-      } catch {
-        // Ignore if cannot create immediately
-      }
-    }
+    // 第一次啟動（或資料夾被刪除）時，建立「圖片 / Wishful_Ai_Draw / 文生圖」
+    ensureOutputDirectories()
 
     this.filePath = join(userDataDir, 'wishful-settings.json')
     this.data = {
@@ -78,6 +74,9 @@ class SettingsStore {
         // 遷移舊的輸出資料夾：Wishful_AI_Output → Wishful_Ai_Draw
         const legacyDir = join(app.getPath('pictures'), 'Wishful_AI_Output')
         if (this.data.outputDirectory === legacyDir) {
+          this.data.outputDirectory = getDefaultOutputDirectory()
+          this.save()
+        } else if (!this.data.outputDirectory || !this.data.outputDirectory.trim()) {
           this.data.outputDirectory = getDefaultOutputDirectory()
           this.save()
         }

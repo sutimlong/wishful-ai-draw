@@ -72,6 +72,16 @@ export interface FalModelPricing {
   basis: string
 }
 
+export interface FalVideoDurationSpec {
+  /** duration 欄位在 fal.ai OpenAPI schema 的型別 */
+  type: 'number' | 'string' | 'seconds_string'
+  /** 支援的合法列舉值（若有定義） */
+  enum?: (string | number)[]
+  min?: number
+  max?: number
+  default?: string | number
+}
+
 export interface FalModelPreset {
   id: string
   name: string
@@ -92,8 +102,20 @@ export interface FalModelPreset {
    */
   imageSizeEnum?: string[]
   /**
-   * 文生圖模型支援的「可選參考圖」輸入欄位（例如 `reference_image_url`／`image_url`／`image_urls`）。
-   * 未設定表示該模型不支援參考圖。由 scripts/sync-fal-text-to-image.mjs 依 schema 自動產生。
+   * 文生影片模型 `duration` 支援的型別與允許值（由 scripts/sync-fal-text-to-video.mjs 自動產生）
+   */
+  durationSpec?: FalVideoDurationSpec
+  /** 文生影片模型 `aspect_ratio` 支援的列舉值 */
+  aspectRatioEnum?: string[]
+  /** 文生影片模型 `resolution` 支援的列舉值 */
+  resolutionEnum?: string[]
+  /** 文生影片模型 `video_size` 支援的列舉值 */
+  videoSizeEnum?: string[]
+  /** 文生影片模型支援的音效開關欄位名稱 */
+  audioField?: 'generate_audio' | 'generate_audio_switch'
+  /**
+   * 文生圖／文生影片模型支援的「可選參考圖」輸入欄位（例如 `reference_image_url`／`image_url`／`image_urls`）。
+   * 未設定表示該模型不支援參考圖。
    */
   referenceImageField?: string
   /** 參考圖欄位是否為陣列（例如 `image_urls`） */
@@ -102,6 +124,12 @@ export interface FalModelPreset {
   requiresReferenceImage?: boolean
   /** 提示詞要送出的欄位名稱（預設 `prompt`；少數模型使用 `instruction`） */
   promptField?: string
+  /** 提示詞是否為必填（未設定視為 true；部分圖生影片模型允許留空） */
+  requiresPrompt?: boolean
+  /** 圖生影片模型可接收的尾幀／終點圖片欄位（例如 `end_image_url`、`tail_image_url`） */
+  endImageField?: string
+  /** 圖生影片模型是否必須提供第 2 張圖片作為尾幀（首尾幀過渡模型） */
+  requiresEndImage?: boolean
   /**
    * 該模型 OpenAPI schema 不接受的參數名稱，送出 payload 前會自動剔除。
    * 由 scripts/sync-fal-models.mjs 依 fal.ai schema 自動產生。
@@ -218,9 +246,75 @@ export interface TextToImageRequest {
   numImages: number
   outputFormat: 'png' | 'jpeg'
   seed?: number | null
-  /** 參考圖的本機檔案路徑（選用）；主程序會上傳至 fal.storage 後帶入模型對應欄位 */
+  /** 參考圖的本機檔案路徑（可多張）；主程序會上傳至 fal.storage 後帶入模型對應欄位 */
+  referenceImageFilePaths?: string[]
+  /** 參考圖的本機檔案路徑（單張；舊版相容，優先使用 referenceImageFilePaths） */
   referenceImageFilePath?: string
 }
+
+/** 對話模式中附加到訊息的圖片 */
+export interface TextToImageChatAttachment {
+  filePath: string
+  fileName: string
+  /** 是否提供給 DeepSeek 作為視覺輸入（看圖） */
+  forVision: boolean
+  /** 是否作為 fal.ai 生成時的參考圖 */
+  asReference: boolean
+}
+
+/** 對話模式中的一則訊息（renderer → main） */
+export interface TextToImageChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: TextToImageChatAttachment[]
+}
+
+/** 文字生成圖片「對話模式」的請求參數 */
+export interface TextToImageChatRequest {
+  messages: TextToImageChatMessage[]
+  /** 使用者目前選取的模型；DeepSeek 可依對話需求改用其他模型 */
+  endpointId: string
+  aspectId: TextToImageAspect
+  numImages: number
+  outputFormat: 'png' | 'jpeg'
+}
+
+/**
+ * 文字生成圖片「對話模式」的結果。
+ * - action: 'chat' → 只回覆對話，尚未生成
+ * - action: 'generate' → DeepSeek 已將任務交接給 fal.ai，並完成指定模型生成
+ */
+export type TextToImageChatResult =
+  | {
+      ok: true
+      action: 'chat'
+      reply: string
+      /** DeepSeek 在對話中建議或指定的模型（可由 UI 顯示切換按鈕） */
+      suggestedModelId?: string
+      /** DeepSeek 推薦的多個模型 id（UI 會在訊息下方為每個推薦模型顯示一鍵切換按鈕） */
+      suggestedModelIds?: string[]
+      /** true = 使用者明確要求切換模型，UI 應同步更新右側模型選單 */
+      applyModelChange?: boolean
+      /** DeepSeek 產生的情境化快速回覆，可直接點擊送出 */
+      quickReplies?: string[]
+    }
+  | {
+      ok: true
+      action: 'generate'
+      reply: string
+      modelId: string
+      modelName: string
+      /** DeepSeek 交給 fal.ai 的英文生圖提示詞 */
+      prompt: string
+      images: TextToImageGeneratedImage[]
+      requestId?: string
+      /** 本次生成預估費用（USD） */
+      costUsd?: number
+      costIsEstimated?: boolean
+      /** 生成後可點擊的下一步快速回覆 */
+      quickReplies?: string[]
+    }
+  | { ok: false; message: string }
 
 /** 單張文字生成圖片的結果 */
 export interface TextToImageGeneratedImage {
@@ -249,6 +343,144 @@ export type TextToImageResult =
 export type TextToImageDownloadResult =
   | { ok: true; filePath: string }
   | { ok: false; message: string; canceled?: boolean }
+
+/**
+ * 應用程式的預設輸出資料夾（main → renderer，TopBar 顯示用）。
+ * 各路徑都會在查詢時確保存在。
+ */
+export interface OutputDirectories {
+  /** 影像風格化輸出資料夾：Mac「圖片 / Wishful_Ai_Draw」 */
+  stylize: string
+  /** 文字生成圖片輸出資料夾：Mac「圖片 / Wishful_Ai_Draw / 文生圖」 */
+  textToImage: string
+  /** 文字生成影片輸出資料夾：Mac「圖片 / Wishful_Ai_Draw / 文生影片」 */
+  textToVideo: string
+  /** 圖片生成影片輸出資料夾：Mac「圖片 / Wishful_Ai_Draw / 圖生影片」 */
+  imageToVideo: string
+}
+
+/** 影片生成支援的畫面比例（文生影片／圖生影片共用） */
+export type TextToVideoAspect = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9'
+
+/** 文字生成影片的請求參數（renderer → main） */
+export interface TextToVideoRequest {
+  endpointId: string
+  prompt: string
+  aspectId: TextToVideoAspect
+  durationSeconds: number
+  resolution: string
+  generateAudio: boolean
+  negativePrompt?: string
+  seed?: number | null
+  /** 可選參考圖的本機檔案路徑 */
+  referenceImageFilePaths?: string[]
+  /** 圖片生成影片模式下的來源圖片本機檔案路徑（第 1 張為起點圖，第 2 張可用於尾幀／多圖） */
+  imageFilePaths?: string[]
+}
+
+/** 圖片生成影片的請求參數 */
+export type ImageToVideoRequest = TextToVideoRequest
+/** 圖片生成影片「對話模式」的請求參數 */
+export type ImageToVideoChatRequest = TextToVideoChatRequest
+/** 圖片生成影片的生成結果 */
+export type ImageToVideoResult = TextToVideoResult
+/** 圖片生成影片「對話模式」的結果 */
+export type ImageToVideoChatResult = TextToVideoChatResult
+/** 圖片生成影片下載／另存結果 */
+export type ImageToVideoDownloadResult = TextToVideoDownloadResult
+/** 「圖生影片」資料夾中的一支影片（renderer 顯示用） */
+export type ImageToVideoFileEntry = TextToVideoFileEntry
+/** 列出「圖生影片」資料夾所有影片的結果 */
+export type ImageToVideoListResult = TextToVideoListResult
+
+/** 文字生成影片「對話模式」的請求參數 */
+export interface TextToVideoChatRequest {
+  messages: TextToImageChatMessage[]
+  /** 使用者目前選取的模型；DeepSeek 可依對話需求改用其他模型 */
+  endpointId: string
+  aspectId: TextToVideoAspect
+  durationSeconds: number
+  resolution: string
+  generateAudio: boolean
+}
+
+/** 單支文字生成影片的結果 */
+export interface TextToVideoGeneratedVideo {
+  /** 可直接顯示的影片 URL（遠端或本機 local-media://） */
+  url: string
+  width?: number
+  height?: number
+  duration?: number
+  /** 若有開啟自動存檔，此為本機輸出檔路徑 */
+  savedFilePath?: string
+}
+
+/** 文字生成影片的結果 */
+export type TextToVideoResult =
+  | {
+      ok: true
+      videos: TextToVideoGeneratedVideo[]
+      endpointId: string
+      requestId?: string
+      /** 本次生成預估費用（USD） */
+      costUsd?: number
+      costIsEstimated?: boolean
+    }
+  | { ok: false; message: string }
+
+/**
+ * 文字生成影片「對話模式」的結果。
+ * - action: 'chat' → 只回覆對話，尚未生成
+ * - action: 'generate' → DeepSeek 已將任務交接給 fal.ai，並完成指定模型生成
+ */
+export type TextToVideoChatResult =
+  | {
+      ok: true
+      action: 'chat'
+      reply: string
+      /** DeepSeek 在對話中建議或指定的模型（可由 UI 顯示切換按鈕） */
+      suggestedModelId?: string
+      /** DeepSeek 推薦的多個模型 id（UI 會在訊息下方為每個推薦模型顯示一鍵切換按鈕） */
+      suggestedModelIds?: string[]
+      /** true = 使用者明確要求切換模型，UI 應同步更新右側模型選單 */
+      applyModelChange?: boolean
+      /** DeepSeek 產生的情境化快速回覆，可直接點擊送出 */
+      quickReplies?: string[]
+    }
+  | {
+      ok: true
+      action: 'generate'
+      reply: string
+      modelId: string
+      modelName: string
+      /** DeepSeek 交給 fal.ai 的英文生影片提示詞 */
+      prompt: string
+      videos: TextToVideoGeneratedVideo[]
+      requestId?: string
+      /** 本次生成預估費用（USD） */
+      costUsd?: number
+      costIsEstimated?: boolean
+      /** 生成後可點擊的下一步快速回覆 */
+      quickReplies?: string[]
+    }
+  | { ok: false; message: string }
+
+/** 文字生成影片下載／另存結果 */
+export type TextToVideoDownloadResult = TextToImageDownloadResult
+
+/** 「文生影片」資料夾中的一支影片（renderer 顯示用） */
+export interface TextToVideoFileEntry {
+  filePath: string
+  /** 可直接播放的本機影片 URL（local-media:// 協定，支援 Range 串流） */
+  url: string
+  fileName: string
+  modifiedAt: number
+}
+
+/** 列出「文生影片」資料夾所有影片的結果 */
+export type TextToVideoListResult =
+  | { ok: true; files: TextToVideoFileEntry[] }
+  | { ok: false; message: string }
 
 /** 「文生圖」資料夾中的一張圖片（renderer 顯示用） */
 export interface TextToImageFileEntry {
@@ -478,10 +710,11 @@ export interface UsageCostInfo {
   isEstimated: boolean
 }
 
-/** 使用記錄事件名稱：正式生成、模擬模式、AI 提示詞優化 */
+/** 使用記錄事件名稱：正式生成、模擬模式、AI 提示詞優化、文字生成影片 */
 export type UsageEventType =
   | 'image_generated'
   | 'image_generated_SIM'
+  | 'video_generated'
   | 'Prompt word_optimization'
 
 /**

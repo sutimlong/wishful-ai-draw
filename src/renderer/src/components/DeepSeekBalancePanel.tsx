@@ -103,7 +103,7 @@ export const DeepSeekBalancePanel: React.FC = () => {
                 balance.totalBalance,
                 balance.currency
               )}（點擊填寫 API Key 或重新整理）`
-            : '填寫 DeepSeek API Key（用於 AI 優化提示詞與餘額查詢）'
+            : '填寫 DeepSeek API Key（用於 AI 優化、對話看圖與餘額查詢）'
         }
         className={`flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
           status === 'unauthorized'

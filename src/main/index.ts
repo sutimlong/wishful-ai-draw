@@ -8,8 +8,10 @@ import { registerBatchIpc } from './ipc/batch.ipc'
 import { registerVideoIpc } from './ipc/video.ipc'
 import { registerAuthIpc } from './ipc/auth.ipc'
 import { registerPromptIpc } from './ipc/prompt.ipc'
-import { registerTextToImageIpc, ensureTextToImageDirectories } from './ipc/textToImage.ipc'
+import { registerTextToImageIpc } from './ipc/textToImage.ipc'
+import { registerImageToVideoIpc, registerTextToVideoIpc } from './ipc/textToVideo.ipc'
 import { registerLocalMediaProtocol } from './services/localMediaProtocol'
+import { ensureOutputDirectories } from './services/outputDirectories'
 
 /** 取得應用程式圖示路徑（支援開發者模式 npm run dev / preview 與正式打包環境） */
 function getAppIconPath(): string | undefined {
@@ -98,7 +100,7 @@ app.whenReady().then(() => {
   registerLocalMediaProtocol()
 
   // 每次啟動都確保「圖片 / Wishful_Ai_Draw / 文生圖」資料夾結構存在
-  ensureTextToImageDirectories()
+  ensureOutputDirectories()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -112,6 +114,8 @@ app.whenReady().then(() => {
   registerAuthIpc()
   registerPromptIpc()
   registerTextToImageIpc()
+  registerTextToVideoIpc()
+  registerImageToVideoIpc()
 
   createWindow()
 

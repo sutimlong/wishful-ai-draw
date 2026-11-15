@@ -17,12 +17,20 @@ export const SELECTED_MODEL_GROUP = '目前選擇'
 export function buildModelGroups(
   catalog: FalModelPreset[],
   query: string,
-  selectedId: string
+  selectedId: string,
+  starredIds?: Iterable<string>
 ): ModelGroup[] {
   const keyword = query.trim().toLowerCase()
   const groups: ModelGroup[] = []
+  const starredSet = new Set(starredIds ?? [])
+  const orderedCatalog =
+    starredSet.size > 0
+      ? [...catalog].sort(
+          (a, b) => Number(starredSet.has(b.id)) - Number(starredSet.has(a.id))
+        )
+      : catalog
 
-  for (const preset of catalog) {
+  for (const preset of orderedCatalog) {
     if (keyword) {
       const haystack = `${preset.name} ${preset.id} ${preset.group ?? ''}`.toLowerCase()
       if (!haystack.includes(keyword)) continue
