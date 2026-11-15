@@ -1,151 +1,378 @@
-# Wishful AI Draw — fal.ai 批量圖片生成桌面應用程式
+<div align="center">
 
-**Wishful AI Draw** 是一款基於 **Electron + React 18 + TypeScript + Tailwind CSS + `@fal-ai/client`** 打造的專業深色桌面應用程式，專為需要將大量本地圖片（數十至數百張）批量傳送給 **fal.ai** 視覺模型（如 FLUX.1 Image-to-Image、FLUX Kontext、Recraft V3、Clarity Upscaler 或任意自訂 Endpoint）進行風格轉換、細節重繪與超解析度放大的創作者與工程團隊而設計。
+<img src="./src/renderer/src/assets/app-icon.png" alt="Wishful AI Draw Logo" width="112" height="112" />
 
----
+# Wishful AI Draw
 
-## ✨ 核心功能特色
+**基於 Electron、React 與 TypeScript 打造的企業級 AI 影像批次風格化、文字生圖與影片抽幀桌面工作站**
 
-1. **批量圖片拖曳與資料夾匯入**：
-   - 支援原生多選圖片對話框、整個資料夾掃描匯入，或直接從桌面將圖片與資料夾拖曳 (Drag & Drop) 進工作區。
-   - 內建 `local-media://` 自訂安全協定與 `nativeImage` 縮圖生成機制，一次載入百張高解析度大圖依然流暢不卡頓。
-2. **高併發佇列引擎 (`BatchQueueEngine`)**：
-   - 可在底部控制列即時動態調整同時併發數量 (`1 ~ 10`)。
-   - 支援佇列 **暫停 (Pause)**、**繼續 (Resume)**、**單張取消 / 全部取消 (`AbortController`)** 與 **失敗項目一鍵重試**。
-   - 內建 **指數退避自動重試 (Exponential Backoff)**，自動處理網路瞬斷或 `429 / 5xx` 錯誤。
-3. **彈性模型與提示詞管理**：
-   - 內建 **fal.ai 全站圖生圖模型目錄**（自動同步約 280 個 `image-to-image` 模型，依實驗室分組並可即時搜尋），預設模型為 **GPT Image 2.6 Sunburst (OpenAI)**。
-   - 每個模型都附帶由 fal.ai OpenAPI schema 解析出的圖片輸入欄位（`image_url` / `image_urls`）與支援參數，不支援的參數（如 GPT Image 系列的 `strength`、`seed`）會在送出前自動剔除，避免 `422` 驗證錯誤。
-   - 下拉選單每個模型後面都會標示 **生成一張圖片的預估金額**（例如 `$0.04 / 張`、`~$0.03 / 張`），選取後會顯示換算依據；`~` 代表依 fal.ai 計價基準換算的估算值。
-   - 仍支援切換 **自訂 Endpoint ID**（可自由指定圖片欄位名如 `image_url` 或陣列 `image_urls`）。
-   - 支援 **全域提示詞 (Global Prompt)** 與 **單張專屬覆蓋提示詞 (Per-Image Custom Prompt)**。
-   - 全域提示詞欄位提供 **AI 優化（DeepSeek）** 按鈕：一鍵將中文提示詞改寫、補齊影像生成所需的構圖／光線／風格細節，並翻譯成英文後回填欄位。
-  - 頂部工具列的 **DeepSeek** 徽章會顯示目前剩餘額度，點擊可直接填寫 DeepSeek API Key。
-   - 提供可折疊的 **進階 JSON 參數覆寫區**，方便傳遞特定模型專屬參數（會覆寫自動剔除的結果）。
-4. **Before / After 互動式滑桿對比預覽 (`InspectorPanel`)**：
-   - 點擊任意卡片即可在右側抽屜使用 **互動式滑桿 (Slider)** 或 **並排模式 (Side-by-Side)** 直觀比較原圖與 AI 生成結果，並檢視即時 `fal.ai` 推論日誌。
-5. **智慧命名與自動下載存檔**：
-   - 生成完成後自動下載至指定輸出資料夾，支援 `{original_name}`、`{timestamp}`、`{index}` 命名樣板與防覆蓋自動編號 (`_1`, `_2`)。
-6. **內建模擬測試模式 (Dry-Run Mock Mode)**：
-   - 無需消耗真實 `fal.ai` API 點數，即可在本地完整模擬「上傳 -> 排隊 -> 生成 -> 自動存檔」全流程。
-   - **預設關閉**，且不會記住上次的開啟狀態；每次啟動 App 都需重新手動開啟。
+[![Version](https://img.shields.io/badge/version-0.1.1-f59e0b?style=for-the-badge)](./package.json)
+[![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white)](./electron.vite.config.ts)
+[![React](https://img.shields.io/badge/React-TypeScript-61DAFB?style=for-the-badge&logo=react&logoColor=black)](./src/renderer/src/App.tsx)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-UI-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](./tailwind.config.js)
+[![fal.ai](https://img.shields.io/badge/fal.ai-280_I2I_%2B_179_T2I-7C3AED?style=for-the-badge)](./src/main/services/falService.ts)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-Prompt_AI-2563EB?style=for-the-badge)](./src/main/services/deepSeekService.ts)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-334155?style=for-the-badge)](./electron-builder.yml)
+
+[核心亮點](#-核心亮點) •
+[詳細功能介紹](#-詳細功能介紹) •
+[技術架構](#-技術架構) •
+[快速開始](#-快速開始與設定) •
+[指令與測試](#-常用指令與打包) •
+[專案結構](#-專案結構)
+
+</div>
 
 ---
 
-## 🚀 快速開始 (開發環境)
+## ✨ 核心亮點
 
-### 1. 安裝依賴套件
+**Wishful AI Draw** 是一款專為高吞吐影像製作與團隊協作設計的跨平台桌面應用程式。透過雙工作區設計將 **「批次影像風格化（Image Stylize）」** 與 **「文字生成圖片（Text-to-Image）」** 整合於單一工作流，並內建 **影片剪輯抽幀器**、**可視化節點流程圖**、**DeepSeek AI 提示詞優化**、**雙層成本結算** 與 **Google 雲端權限／稽核系統**。
 
-```bash
-npm install
+| 模組面向 | 關鍵能力摘要 |
+| :--- | :--- |
+| **🔐 權限閘道與資安** | Google OAuth 2.0 Loopback + PKCE (`S256`) 白名單驗證、序列號授權登入、RBAC 角色徽章、`safeStorage` 本機加密 |
+| **🎨 批次影像風格化** | 雙階段高併發佇列（10 路平行上傳 + `1 ~ 40` 動態運算池）、3 種檢視視圖、4 階段 AI 後製管線與前後對比滑桿 |
+| **🪄 文字生圖工作室** | 內建 **179 個**文生圖／參考圖編輯模型、最多支援 **10 張**參考圖輸入、5 種畫幅比例與本地畫廊燈箱 |
+| **🎬 影片精準抽幀器** | 自訂 `local-media://` HTTP 206 位元組串流播放、膠捲縮圖時間軸、NLE 快捷鍵與 `ffmpeg-static` 多 FPS PNG 抽幀 |
+| **🧠 智慧提示詞與計費** | DeepSeek 結構化提示詞優化與餘額監控、fal.ai 實際帳單查詢＋預估雙層計價、Dry-Run 無耗損模擬模式 |
+| **📊 雲端使用稽核** | 非同步序列化寫入 Google Sheets 10 欄稽核紀錄（UTC+8），支援非阻塞背景成本回填 |
+
+---
+
+## 🚀 詳細功能介紹
+
+### 1. 🔐 強制安全登入閘道與角色權限控管 (Auth Gate & RBAC)
+
+應用程式啟動後會經過 `LoginGate` 驗證層，確保所有 API 資源與使用紀錄皆可追蹤歸屬：
+
+* **雙軌登入驗證機制**：
+  * **Google OAuth 2.0 + PKCE (`S256`)**：透過本機隨機迴環埠 (`127.0.0.1:0`) 安全完成瀏覽器授權交換，自動比對 Google Sheets (`allowedAccounts`) Gmail 白名單，並讀取對應的 **RBAC 角色標籤**（顯示金色 `管理員` 徽章或 `一般使用者` 徽章）。
+  * **序列號授權登入**：支援無 Google 帳號環境下的專屬序號登入，透過 Google Sheets (`serialSheet`) 驗證有效性並自動回寫登入時間與狀態至 B–D 欄。
+* **安全工作階段保存**：Google 工作階段 (`google-auth.json`) 與序列號工作階段 (`serial-auth.json`) 採用互斥管理並透過 Electron `safeStorage` 進行作業系統層級加密，所有 OAuth 憑證與 API 金鑰僅存活於 Main Process，不外洩至前端渲染層。
+
+---
+
+### 2. 🖼️ 批次影像風格化工作區 (Batch Image Stylize)
+
+專為大量素材轉換與微調打造的多維度工作區，支援 **檔案總管拖放**（經由 Preload `webUtils.getPathForFile` 解析真實路徑）、**資料夾遞迴匯入** 與 **影片抽幀直接入列**。
+
+#### 三種工作區檢視模式 (`split` / `workflow` / `grid`)
+1. **分欄模式 (`split`)**：左側清單佇列搭配右側互動檢查器與節點狀態，兼顧選取效率與單圖細節審查。
+2. **節點畫布 (`workflow`)**：以 `@xyflow/react` 構建即時唯讀 DAG 工作流畫布，依目前設定動態串接節點：`InputNode` → `PreProcessNode` → `FalApiNode` → 動態可選後製節點（`UpscaleNode` / `FeatureNode`）→ `OutputNode`。
+3. **網格畫廊 (`grid`)**：透過原生 OS 縮圖快取呈現 360×360 高效瀏覽網格，支援依狀態篩選（`all` / `idle` / `active` / `completed` / `failed`）、`Cmd/Ctrl+Click` 多選與右鍵選單（`BatchItemContextMenu`）。
+
+#### 豐富的模型庫與 4 階段串聯後製管線
+* **280 個同步圖生圖模型 ＋ 6 個精選預設模型**：預設採用 `fal-ai/gpt-image-2.6-sunburst/edit`，支援 OpenAPI Schema 能力自動識別、**自訂 Endpoint ID** 與 **Custom JSON 參數深度合併**，可針對單張圖片設定專屬 `customPrompt` 覆寫全域提示詞。
+* **4 階段循序 AI 後製管線**（任一後製階段發生錯誤時僅記錄警告並保留前一階段輸出 URL，確保主生成結果不遺失）：
+
+| 階段 | 處理功能 | fal.ai 模型端點 | 主要支援參數與特性 |
+| :---: | :--- | :--- | :--- |
+| **1** | **AI 畫質放大 (Upscale)** | `fal-ai/clarity-upscaler` | 放大倍率 `1 ~ 4`、`creativity`、`resemblance`、`guidanceScale`、`steps` |
+| **2** | **智慧去背 (Background Removal)** | `fal-ai/birefnet` | `General Use (Light)` / `Heavy` / `Portrait`、解析度 `1024x1024` / `2048x2048`、`refineForeground`、`png`/`webp`/`gif` |
+| **3** | **尺寸調整 (Resize)** | `fal-ai/fal-image-resize` | 自訂 `width` / `height`、裁切適應 `fit`（`cover`/`contain`/`fill`/`inside`）、輸出格式 `png`/`jpeg`/`webp` |
+| **4** | **人臉修復 (Face Restore)** | `fal-ai/codeformer` | `fidelity` 保真度、`upscaleFactor`、`faceUpscale`、`aligned`、`onlyCenterFace` |
+
+#### `InspectorPanel` 前後對比與細部檢視
+* 提供可拖曳的 **互動式滑桿比對 (`slider`)** 與 **左右並排比對 (`side-by-side`)** 模式，即時檢視原圖與 AI 輸出差異。
+* 完整呈現每張任務的 `requestId`、處理耗時、實際／預估花費、單圖即時處理日誌，以及單張失敗重試按鈕。
+
+---
+
+### 3. 🪄 文字生成圖片工作室 (Text-to-Image Studio)
+
+獨立的文生圖與多圖參考創作介面，適合快速視覺發想與參考圖融合編輯：
+
+* **179 個可用模型**：整合 `167` 個自動同步模型目錄與 `12` 個精選支援參考圖編輯的模型（以 `★` 標記，如 `nano-banana-pro/edit`、`flux-3/edit-image`、`seedream`、`gpt-image-2/edit`、`kling-image/o1`、`vidu`、`bria/fibo-2/edit` 等，預設模型為 `google/nano-banana-2.1`）。
+* **多參考圖與版面參數**：支援上傳最多 **10 張參考圖** (`MAX_REFERENCE_IMAGES = 10`)，提供 5 種常用畫幅比例：
+  * `1:1` (`1024×1024`) · `16:9` (`1344×768`) · `9:16` (`768×1344`) · `4:3` (`1152×896`) · `3:4` (`896×1152`)
+* **彈性生成與畫廊管理**：支援單次產出 `1` / `2` / `4` 張圖、切換 `png` / `jpeg` 格式與內建風格預設模板；產出結果自動保存至 `<Pictures>/Wishful_Ai_Draw/文生圖`，並支援燈箱預覽與「另存新檔」。
+
+---
+
+### 4. 🎬 影片剪輯與高效率抽幀器 (Video Trimmer & Frame Extractor)
+
+直接於桌面端內建專業非線性剪輯體驗，將影片精華片段一鍵轉換為批次 AI 風格化素材：
+
+* **廣泛格式與硬體級順暢拖曳**：支援 `.mp4`、`.mov`、`.webm`、`.mkv`、`.avi`、`.m4v`，透過自訂 `local-media://` 協定實現 HTTP `206 Partial Content` 位元組範圍串流，高畫質大檔時間軸刷幀零延遲。
+* **免 `ffprobe` 膠捲時間軸 (`FilmstripTimeline`)**：利用內嵌 `ffmpeg-static` 快速產出 `8 ~ 24` 張連續預覽縮圖 (`scale=160:-1`)，直覺框選 In / Out 區間。
+* **剪輯師級別鍵盤快捷鍵**：
+  * `Space`：播放 / 暫停
+  * `J` / `K` / `L`：1x–4x 倒轉穿梭 / 暫停 / 快轉穿梭
+  * `I` / `O`：標記入點 (In) / 出點 (Out)
+  * `Q` / `W` 或 `↑` / `↓`：快速跳轉至入點 / 出點
+  * `←` / `→`：逐幀微調（搭配 `Shift` ±1 秒）
+  * `Home` / `End` / `Esc`：跳至片頭 / 片尾 / 關閉視窗
+* **自動入列抽幀**：可選擇 `4` / `8 (預設)` / `12` / `16` / `24` FPS，將選取區間輸出為無損 PNG 序列至系統暫存資料夾，完成後自動匯入批次待處理清單。
+
+---
+
+### 5. 🧠 DeepSeek AI 提示詞優化與餘額監控
+
+* **結構化提示詞引擎**：整合 DeepSeek `deepseek-chat` API（30 秒請求逾時保護），依據 **`主體 → 構圖 → 場景 → 光線 → 材質 → 鏡頭 → 風格`** 專業結構自動擴寫並翻譯為高精度英文 Prompt，同時於 Google Sheets 記錄 `Prompt word_optimization` 事件。
+* **TopBar 即時餘額面板**：內建 `DeepSeekBalancePanel`（8 秒查詢逾時），隨時掌握帳戶可用餘額狀態。
+
+---
+
+### 6. 💰 雙層成本估算／實算、模擬模式與智慧存檔
+
+* **事前預估 ＋ 事後實算 (`falCostService`)**：
+  * `BottomActionBar` 於開工前依據各模型定價與 `ASSUMED_OUTPUT_MEGAPIXELS = 1` 估算批次總成本；`TopBar` 即時顯示 fal.ai 錢包餘額 (`account/billing?expand=credits`)。
+  * 單張完成後優先向 fal.ai `billing-events?request_id=...` 查詢真實扣款金額；若帳單尚未落盤或無權限，自動降級呼叫 `pricing/estimate`（優先 `historical_api_price`，次之 `unit_price`），並以 Per-Endpoint 快取與 `403` `billingDenied` 熔斷鎖存避免無效重複請求。
+* **Dry-Run 模擬模式 (`mockMode`)**：於設定切換啟用（預設不持久化至磁碟，每次啟動重置為關閉），模擬流程會輸出至 `image_generated_SIM`，讓團隊在不消耗任何 API 額度的情況下完整測試佇列與檔案命名規則。
+* **防覆寫智慧存檔 (`imageDownloader` / `outputDirectories`)**：
+  * 預設自動建立並儲存至系統圖片目錄：`<Pictures>/Wishful_Ai_Draw`（批次風格化）與 `<Pictures>/Wishful_Ai_Draw/文生圖`（文字生圖）。
+  * 支援 `{original_name}`、`{timestamp}`、`{index}` 命名模板（預設 `{original_name}_ai_{timestamp}`），同名衝突自動遞增 `_1`、`_2` 後綴保護既有檔案。
+
+---
+
+### 7. 📊 Google Sheets 企業級雲端稽核紀錄
+
+透過序列化非同步佇列 (`usageLogger.ts` + `googleSheetsService.ts`) 確保在 40 路高併發場景下依然能精準寫入雲端稽核表而不互相覆蓋：
+
+* **Sheet1（使用與成本稽核表）**：依台灣時間 (`UTC+8`) 自動寫入 A–J 共 10 個欄位（時間、使用者身分、動作類型、模型 ID、狀態、耗時等），並在取得 fal.ai 實際帳單金額後於背景非阻塞回填 H / I 欄成本欄位。
+* **Sheet2（`serialSheet` 序號授權表）**：管理可用序號與開通／登入狀態回寫。
+* **Sheet3（`allowedAccounts` 白名單與權限表）**：控管允許登入的 Gmail 帳號與對應的 RBAC 角色標籤。
+
+---
+
+## 📐 技術架構
+
+### 整體進程與分層架構
+
+應用程式嚴格遵守 Electron **安全隔離設計**（`contextIsolation: true`、`nodeIntegration: false`），所有檔案系統存取、FFmpeg 運算、API 金鑰加解密與第三方雲端通訊皆封裝於 Main Process，Renderer 僅透過 Preload 暴露的 `window.electronAPI` 與定義於 `src/shared/ipc-channels.ts` 的 **32 個強型別 IPC 通道** 進行雙向通訊。
+
+```mermaid
+flowchart TB
+    subgraph Renderer["Renderer Process (React + TypeScript + Tailwind CSS)"]
+        UI["頁面與視圖: LoginGate / BatchWorkspace / TextToImagePage / VideoTrimmer"]
+        Flow["工作流與檢視: WorkflowGraph (@xyflow/react) / InspectorPanel / SettingsModal"]
+        Zustand["狀態管理: useAuthStore / useBatchStore / useAppViewStore"]
+        UI --> Zustand
+        Flow --> Zustand
+    end
+
+    subgraph Preload["Preload Bridge (contextBridge)"]
+        API["window.electronAPI (32 IPC Channels + webUtils.getPathForFile)"]
+    end
+
+    subgraph Main["Main Process (Node.js + 7 IPC Modules)"]
+        IPC["IPC Handlers: auth / batch / config / file / prompt / textToImage / video"]
+        Engine["BatchQueueEngine (雙階段併發控制 + AbortController + 指數退避重試)"]
+        Services["Core Services: falService / falCostService / deepSeekService / videoService"]
+        Security["Security & Auth: store / googleAuthService / serialAuth / googleSheetsService"]
+        Protocol["Custom Protocol: local-media:// (HTTP 206 Streaming + OS 360px Thumbnails)"]
+        IPC --> Engine
+        IPC --> Services
+        IPC --> Security
+        Engine --> Services
+    end
+
+    subgraph External["External APIs & OS Capabilities"]
+        FalAPI["fal.ai Platform (Storage / Inference / 4-Stage Post-Process / Billing)"]
+        DeepSeekAPI["DeepSeek API (chat/completions + user/balance)"]
+        GoogleCloud["Google Cloud (OAuth 2.0 PKCE + Sheets Audit A-J)"]
+        OS["Local OS (Electron safeStorage / Pictures Dir / ffmpeg-static)"]
+    end
+
+    Zustand <-->|"Typed IPC Events"| API
+    API <-->|"ipcMain.handle / webContents.send"| IPC
+    UI -.->|"Media & Thumbnails"| Protocol
+    Services --> FalAPI
+    Services --> DeepSeekAPI
+    Security --> GoogleCloud
+    Security --> OS
+    Services --> OS
+    Protocol --> OS
 ```
 
-### 2. 啟動開發模式 (含熱重載 HMR)
+### 高併發批次引擎管線 (`BatchQueueEngine`)
+
+為了最大化大規模圖集的處理吞吐量並防止頻寬塞車或 API 限流，批次引擎採用 **「預上傳去重」＋「動態運算 worker pool」＋「非阻塞成本回填」** 的兩階段架構：
+
+```mermaid
+flowchart LR
+    Queue["待處理圖片佇列"] --> UploadPool["Phase 1: 平行預上傳 (UPLOAD_CONCURRENCY = 10)"]
+    UploadPool --> Dedup{"uploadCache & uploadInflight 去重"}
+    Dedup -->|"fal.storage.upload"| Pool["Phase 2: 動態運算 Worker Pool (1 ~ 40 實時可調)"]
+    Pool --> Infer["主模型推論 (fal.subscribe + Payload Builder)"]
+    Infer --> Post1["Step 1: clarity-upscaler (選配)"]
+    Post1 --> Post2["Step 2: birefnet 去背 (選配)"]
+    Post2 --> Post3["Step 3: fal-image-resize (選配)"]
+    Post3 --> Post4["Step 4: codeformer 人臉修復 (選配)"]
+    Post4 --> Download["下載存檔 (防覆寫命名)"]
+    Download --> Audit["非阻塞 falCostService 結算 + Sheets H/I 欄回填"]
+
+    Infer -.->|"可重試錯誤 (maxRetries=2, 1.2s 指數退避)"| Pool
+    Infer -.->|"不可重試 (400/401/403/404/422/JSON/Cancel)"| Fail["標記失敗並記錄錯誤日誌"]
+```
+
+### 核心架構設計亮點
+
+1. **自訂特權協定 `local-media://` (`localMediaProtocol.ts` & `localFileResponse.ts`)**
+   * **影片無縫拖曳**：針對本地影片檔案請求自動解析 HTTP `Range` 標頭並回傳 **`206 Partial Content`** 分段串流，使 `<video>` 元素無須整檔載入即可精準跳轉至任意影格。
+   * **輕量化縮圖快取**：當 Renderer 要求圖片預覽時，透過 Electron `nativeImage.createThumbnailFromPath` 即時向作業系統請求 **360×360 (JPEG quality 82)** 原生縮圖，大幅降低網格畫廊瀏覽數百張高解析圖檔時的記憶體峰值。
+2. **模型目錄自動同步與 Schema 驅動組裝 (`falPayloadBuilder.ts`)**
+   * 透過 `scripts/sync-fal-models.mjs` 與 `scripts/sync-fal-text-to-image.mjs` 自動拉取模型清單並產生強型別目錄（`src/shared/falModelCatalog.ts`、`src/shared/falTextToImageCatalog.ts`）。
+   * 執行期由 `falPayloadBuilder.ts` 依據不同模型家族（如 Diffusion 與 GPT Image 原生參數差異）動態組裝 Payload、剔除模型標記的 `unsupportedFields`，再深度合併使用者的 `customJsonParams`。
+3. **跨平台打包與原生工具鏈內嵌 (`electron-builder.yml`)**
+   * `ffmpeg-static` 與 `resources/**` 皆設定於 `asarUnpack`，`videoService.ts` 會在打包執行環境自動將 `app.asar` 路徑重寫為 `app.asar.unpacked`，確保無須使用者預先安裝系統 FFmpeg 即可直接運行抽幀與時間軸縮圖生成。
+4. **安全敏感資料保護 (`store.ts`)**
+   * 所有使用者自填的 `falApiKey`、`deepseekApiKey` 與登入 Token 檔案 (`wishful-settings.json`、`google-auth.json`、`serial-auth.json`) 皆以 Electron `safeStorage` 進行作業系統鑰匙圈／DPAPI 加密存儲，無明文金鑰落地風險。
+
+---
+
+### 核心技術棧 (Tech Stack)
+
+| 層級 | 選用技術與套件 | 用途與角色 |
+| :--- | :--- | :--- |
+| **桌面框架與建置** | Electron · `electron-vite` · `electron-builder` | 跨平台桌面容器、Main/Preload/Renderer 熱重載建置與 macOS/Windows 安裝包打包 |
+| **前端視圖與樣式** | React · TypeScript · Tailwind CSS · `lucide-react` | 高密度暗色專業創作介面、響應式切版與圖示系統 |
+| **狀態與流程圖** | Zustand · `@xyflow/react` | 輕量化視圖／認證／佇列狀態管理，以及即時可視化節點流程圖 |
+| **AI 推論與提示詞** | `@fal-ai/client` · DeepSeek Chat API | 圖生圖、文生圖、4 階段後製運算，以及提示詞擴寫翻譯與雙邊帳戶餘額監控 |
+| **影音與媒體處理** | `fluent-ffmpeg` · `ffmpeg-static` · `local-media://` | 內嵌跨平台轉碼引擎、時間軸膠捲縮圖生成與 206 Byte-Range 本地串流 |
+| **雲端授權與稽核** | `googleapis` · OAuth 2.0 Loopback PKCE | 企業內部 Google Sheets 白名單／序號驗證、RBAC 權限與 UTC+8 使用稽核 |
+| **測試框架** | Vitest | 涵蓋 41 份測試檔的單元測試與核心引擎行為驗證 |
+
+---
+
+## 🔧 快速開始與設定
+
+### 環境需求
+* **Node.js**（建議 LTS 版本）與 **npm**
+* macOS (`arm64` / `x64`) 或 Windows (`x64`)
+
+### 1. 安裝依賴並啟動開發模式
 
 ```bash
+# 安裝所有依賴套件
+npm install
+
+# 啟動 Electron + Vite 開發伺服器
 npm run dev
 ```
 
----
+### 2. Google 登入與雲端稽核設定（選用／企業部署）
 
-## 🔑 設定 fal.ai API Key
+若需自架或重設 Google OAuth 2.0 用戶端憑證與 Service Account（用於存取 Google Sheets 稽核紀錄、序號表與帳號白名單），請完整參閱專案內建指南：
 
-1. 前往 [fal.ai Dashboard Keys](https://fal.ai/dashboard/keys) 建立並複製您的 API Key（格式通常為 `key_id:key_secret`）。
-2. 在應用程式右上角點擊 **「未設定 API Key」** 或 **「設定 (齒輪圖示)」**。
-3. 貼上 API Key 並點擊「儲存設定」。應用程式會透過系統原生的 `safeStorage` (macOS Keychain / Windows DPAPI) 進行本地加密儲存。
+* 📖 **[Google OAuth 與 Sheets 完整設定指南](./resources/GOOGLE_SETUP.md)**
 
-> **💡 提示**：若您想先測試介面與佇列存檔功能，可直接點擊頂部工具列的 **「模擬模式 (ON)」**，無須填寫 API Key 即可執行批量測試。
-
----
-
-## 🤖 DeepSeek 提示詞優化（AI 優化按鈕）
-
-左側「全域提示詞 (Global Prompt)」標題旁的 **AI 優化** 按鈕會：
-
-1. 把目前的全域提示詞送往 **DeepSeek Chat Completions API**（`https://api.deepseek.com/chat/completions`，模型 `deepseek-chat`）。
-2. 依「主體 → 構圖 → 場景 → 光線 → 材質 → 鏡頭 → 風格」重寫成適合 FLUX / GPT Image 等模型的英文提示詞，並保留原始創作意圖。
-3. 成功後直接覆寫全域提示詞欄位；失敗時在欄位下方顯示錯誤訊息。
-4. 每次優化成功都會在 Google 使用記錄試算表追加一列，事件欄為 `Prompt word_optimization`（E 欄為原始提示詞、F 欄為 `deepseek-chat`、花費與張數欄留空），方便統計 AI 優化用量。
-
-> **🔐 金鑰位置**：內建的 DeepSeek 金鑰定義在 `src/main/services/deepSeekService.ts` 的 `DEFAULT_DEEPSEEK_API_KEY`，僅會在 **main process** 使用，不會暴露給 renderer。此金鑰會被打包進應用程式產物中，僅適合個人／內部使用；若需對外散布，建議改為由使用者在設定中填入自己的 Key。
-
-### TopBar 的 DeepSeek 金鑰與剩餘額度
-
-頂部工具列的 **DeepSeek** 徽章會顯示目前帳戶餘額（`GET https://api.deepseek.com/user/balance`）：
-
-- 有餘額時直接顯示金額（USD → `$`、CNY → `¥`），滑鼠移上去可看完整數字。
-- 點擊徽章會展開面板，可**直接填寫／更新 DeepSeek API Key**、重新整理餘額，並查看「儲值 / 贈送」額度與 `is_available` 狀態。
-- 儲存金鑰後會自動重新查詢餘額；批量生成結束時也會一併更新；401 / 403 會顯示「DeepSeek Key 無效」。
-- 輸入框留空即回退到內建的 `DEFAULT_DEEPSEEK_API_KEY`；金鑰以 macOS Keychain / `safeStorage` 加密保存在本機設定檔。
-- 同一個金鑰欄位也可以在「設定」視窗（齒輪圖示）中修改。
-
----
-
-## 🧪 自動化測試與型別檢查
-
-本專案使用 **Vitest** 進行佇列併發限制、指數退避重試、Payload 組裝與防覆蓋存檔測試：
+專案亦提供輔助腳本方便驗證與匯入設定：
 
 ```bash
-# 執行單元與整合測試
-npm test
+# 檢查目前 Google 憑證與設定完整性
+node scripts/check-google-setup.cjs
 
-# 執行 Main / Preload / Renderer TypeScript 型別檢查
-npm run typecheck
+# 快速匯入 Service Account 憑證檔案
+node scripts/import-service-account.cjs
 ```
 
-### 同步 fal.ai 模型目錄
-
-「AI 模型選擇」的完整清單由 `src/shared/falModelCatalog.ts` 提供（自動產生，請勿手動編輯）。
-當 fal.ai 上架新模型或調整參數時，執行：
-
-```bash
-npm run sync:fal-models
-```
-
-腳本會抓取 fal.ai `image-to-image` 目錄、各模型的 OpenAPI schema 與模型頁面的計價資訊，自動產生：
-- 圖片輸入欄位（`image_url` / `image_urls`）與是否為陣列
-- 是否支援擴散參數（`strength` / `num_inference_steps` / `guidance_scale` / `negative_prompt`）
-- 該模型不支援的參數清單（`unsupportedFields`），送出前自動剔除
-- 計價資訊（`pricing`）：fal.ai 公布的計價單位（每張 / 每百萬像素 / 每運算秒 / token）與單價，並換算成「生成一張圖片」的預估金額
-
-計價換算規則（`perImageUsd`，`~` 表示估算）：
-
-| fal 計價基準 | 換算方式 |
-| --- | --- |
-| 每張 / 每次（`images`、`generations`） | 直接採用 fal 公布單價 |
-| 每百萬像素（`megapixels`） | 單價 × 約 1 MP（以 1024×1024 輸出估算） |
-| 輸入＋輸出皆計價（`processed megapixels`） | 單價 × 約 2 MP |
-| 說明文字中的「$X per image」 | 直接採用該金額 |
-| token 計價 | 取 fal 官方價格表中 1024×1024、`high` 品質的金額 |
-| 每運算秒（`compute seconds`） | 無法換算單張，只顯示每秒費率 |
-
-`types.ts` 中的 `DEFAULT_FAL_PRESETS` 為人工驗證過的精選模型，會固定排在清單最前面並優先採用；其計價資訊會沿用同一個模型（含 `fal-ai/`、`openai/` 別名）同步到的價格。
+> [!IMPORTANT]
+> 本專案的 `.gitignore` 已預設忽略 `resources/google-credentials.json`、`resources/google-service-account.json` 與 `.env*` 等機敏憑證檔案，請勿將實際金鑰提交至公開版本庫。
 
 ---
 
-## 📦 生產環境建置與桌面打包
+## 📦 常用指令與打包
 
-```bash
-# 僅編譯並建置生產環境 bundle (輸出至 out/)
-npm run build
-
-# 打包 macOS 應用程式 (.dmg / .zip)
-npm run build:mac
-
-# 打包 Windows 應用程式 (.exe NSIS / Portable)
-npm run build:win
-```
+| 指令 | 說明 |
+| :--- | :--- |
+| `npm run dev` | 啟動 `electron-vite dev` 開發模式 |
+| `npm run start` | 以 `electron-vite preview` 預覽已建置的應用程式 |
+| `npm run build` | 執行類型檢查 (`typecheck`) 並建置生產環境檔案 |
+| `npm run build:mac` | 建置並封裝 macOS 安裝檔（`dmg` / `zip`，支援 `arm64` & `x64`） |
+| `npm run build:win` | 建置並封裝 Windows 安裝檔（`nsis` / `portable`，支援 `x64`） |
+| `npm test` | 執行 `tests/**/*.test.ts` 全套 Vitest 單元測試（共 41 份測試檔） |
+| `npm run typecheck` | 執行專案整體 TypeScript 型別檢查 |
+| `npm run lint` | 執行 ESLint 程式碼靜態品質檢查 |
+| `npm run format` | 使用 Prettier 格式化原始碼 |
+| `npm run sync:fal` | 一鍵同步最新的 fal.ai **圖生圖** 與 **文生圖** 模型目錄 |
+| `npm run sync:fal-models` | 僅同步圖生圖模型目錄至 `src/shared/falModelCatalog.ts` |
+| `npm run sync:fal-text-to-image` | 僅同步文生圖模型目錄至 `src/shared/falTextToImageCatalog.ts` |
 
 ---
 
-## 📂 分批開發提示詞文件 (`prompts/`)
+## 📁 專案結構
 
-若您需要擴充或讓 AI 重新分階段實作，請參閱 [`prompts/`](./prompts) 目錄下的規模化提示詞指南：
-- [`00_MASTER_OVERVIEW.md`](./prompts/00_MASTER_OVERVIEW.md) — 專案總覽與分批執行指南
-- [`01_APP_FOUNDATION.md`](./prompts/01_APP_FOUNDATION.md) — Phase 1：Electron 基底與安全 IPC 架構
-- [`02_UI_DESIGN_SYSTEM.md`](./prompts/02_UI_DESIGN_SYSTEM.md) — Phase 2：深色創作工作區介面與 Zustand 狀態管理
-- [`03_FAL_API_AND_BATCH_ENGINE.md`](./prompts/03_FAL_API_AND_BATCH_ENGINE.md) — Phase 3：fal.ai SDK 串接與高併發佇列引擎
-- [`04_TESTING_AND_BUILD.md`](./prompts/04_TESTING_AND_BUILD.md) — Phase 4：單元測試、縮圖記憶體優化與桌面打包
-- [`05_Node_Based_Workflow_UI.md`](./prompts/05_Node_Based_Workflow_UI.md) — Phase 5：`@xyflow/react` AI 工作流節點化視覺介面
-- [`06_Video_Input_and_Frame_Extraction.md`](./prompts/06_Video_Input_and_Frame_Extraction.md) — Phase 6：影片匯入、頭尾剪裁與 FFmpeg 8 fps 序列影像擷取
-
+```text
+Wishful_Ai_Draw/
+├── electron.vite.config.ts              # Main / Preload / Renderer 建置設定與路徑別名 (@shared, @renderer)
+├── electron-builder.yml                 # macOS / Windows 打包設定與 ffmpeg-static 解包規則
+├── package.json                         # 專案相依套件與開發／同步／打包腳本
+├── tailwind.config.js                   # Tailwind CSS 主題與登入頁面動態動畫設定
+├── vitest.config.ts                     # Vitest 單元測試環境配置 (tests/**/*.test.ts)
+├── resources/
+│   └── GOOGLE_SETUP.md                  # Google OAuth 2.0 與 Sheets 三分頁架構設定手冊
+├── scripts/
+│   ├── sync-fal-models.mjs              # 自動同步圖生圖模型目錄腳本
+│   ├── sync-fal-text-to-image.mjs       # 自動同步文生圖模型目錄腳本
+│   ├── check-google-setup.cjs           # Google 憑證設定檢查腳本
+│   └── import-service-account.cjs       # Service Account JSON 匯入工具
+├── tests/                               # 41 份 Vitest 測試套件（涵蓋引擎、計費、協議、認證與元件邏輯）
+└── src/
+    ├── main/                            # Electron Main Process
+    │   ├── index.ts                     # 應用程式生命週期、視窗隔離、local-media 特權協定與 IPC 註冊
+    │   ├── ipc/                         # 7 大領域 IPC 處理器
+    │   │   ├── auth.ipc.ts              # Google OAuth / 序號登入 / 登出
+    │   │   ├── batch.ipc.ts             # 批次佇列開始、暫停、繼續、取消與重試
+    │   │   ├── config.ipc.ts            # 本機安全設定、模型目錄與餘額查詢
+    │   │   ├── file.ipc.ts              # 檔案對話框、資料夾掃描與另存圖片
+    │   │   ├── prompt.ipc.ts            # DeepSeek AI 提示詞優化
+    │   │   ├── textToImage.ipc.ts       # 文字生成圖片執行與存檔
+    │   │   └── video.ipc.ts             # 影片膠捲縮圖產生與指定區間抽幀
+    │   └── services/                    # 核心業務與系統服務單例
+    │       ├── batchQueueEngine.ts      # 兩階段高併發引擎、重試與後製串聯調度器
+    │       ├── falService.ts            # fal.ai 檔案上傳快取、推論與 4 階段後製呼叫
+    │       ├── falPayloadBuilder.ts     # Schema 驅動參數組裝與 Custom JSON 合併
+    │       ├── falCostService.ts        # billing-events 實算 / pricing estimate 雙層計價與餘額查詢
+    │       ├── deepSeekService.ts       # DeepSeek Prompt 優化與帳戶餘額查詢
+    │       ├── textToImageService.ts    # 文生圖推論與多參考圖封裝
+    │       ├── videoService.ts          # 內嵌 ffmpeg-static 影片縮圖與 PNG 抽幀服務
+    │       ├── localMediaProtocol.ts    # local-media:// 協定註冊與安全路徑校驗
+    │       ├── localFileResponse.ts     # HTTP 206 Byte-Range 串流與 360px OS 原生縮圖回應
+    │       ├── imageDownloader.ts       # 產出圖片下載與防覆寫命名處理
+    │       ├── outputDirectories.ts     # 系統圖片預設輸出路徑管理
+    │       ├── store.ts                 # safeStorage 加密設定儲存與 Mock 模式開關
+    │       ├── googleAuthService.ts     # Google 工作階段生命週期管理
+    │       ├── googleOAuthPkce.ts       # Loopback (127.0.0.1:0) + PKCE (S256) 授權流程
+    │       ├── googleSheetsService.ts   # Google Sheets 3 分頁讀取、白名單與成本回填
+    │       ├── allowedAccounts.ts       # Gmail 帳號白名單解析
+    │       ├── userRoleService.ts       # RBAC 角色查詢與標準化
+    │       ├── serialAuth.ts            # 序號加密工作階段管理
+    │       ├── serialKeyService.ts      # 序號驗證與 Sheet2 狀態回寫
+    │       ├── usageLogger.ts           # 非同步序列化雲端稽核日誌佇列
+    │       ├── usageLoggerWiring.ts     # 稽核事件接線與成本回填協調
+    │       └── taiwanTime.ts            # UTC+8 台灣時間格式化工具
+    ├── preload/
+    │   └── index.ts                     # contextBridge 暴露 window.electronAPI 與檔案路徑取得介面
+    ├── shared/                          # Main / Preload / Renderer 共用型別與常數
+    │   ├── ipc-channels.ts              # 32 個 IPC 雙向通道常數定義
+    │   ├── types.ts                     # 應用程式核心介面與預設圖生圖精選模型
+    │   ├── concurrency.ts               # MAX_BATCH_CONCURRENCY = 40 併發上限限制器
+    │   ├── falPricing.ts                # 費率格式化與批次成本估算函式
+    │   ├── userRole.ts                  # 管理員 / 一般使用者 RBAC 常數與判斷
+    │   ├── falModelCatalog.ts           # 280 個圖生圖模型自動同步目錄
+    │   ├── falTextToImageModels.ts      # 整合 179 個文生圖模型與星號精選標記
+    │   ├── falTextToImageCatalog.ts     # 167 個自動同步文生圖模型目錄
+    │   └── falTextToImageExtraModels.ts # 12 個擴充支援參考圖編輯之精選模型
+    └── renderer/src/                    # React 前端使用者介面
+        ├── App.tsx                      # 根元件與雙工作區／登入閘道路由切換
+        ├── store/                       # Zustand 狀態管理 (Auth / Batch / AppView)
+        ├── utils/                       # 前端費用計算 (cost.ts) 與模型選項輔助 (modelOptions.ts)
+        └── components/                  # 核心 UI 元件
+            ├── LoginGate.tsx            # Google OAuth / 序號雙軌登入閘道
+            ├── LoginBackdrop.tsx        # 登入頁面極光與網格動態背景
+            ├── TopBar.tsx               # 工作區切換、角色徽章、fal/DeepSeek 餘額與設定入口
+            ├── SidebarConfig.tsx        # 模型選擇、提示詞輸入、DeepSeek 優化與 4 階段後製開關
+            ├── BatchWorkspace.tsx       # 分欄 / 節點畫布 / 網格畫廊三模式切換與篩選控制
+            ├── BatchGridCard.tsx        # 網格卡片縮圖與進度狀態顯示
+            ├── BatchItemContextMenu.tsx # 佇列項目右鍵快速操作選單
+            ├── InspectorPanel.tsx       # Before/After 拖曳滑桿、單圖提示詞覆寫、日誌與成本檢視
+            ├── BottomActionBar.tsx      # 1~40 即時併發調整、執行控制 (開始/暫停/取消) 與費用預估
+            ├── SettingsModal.tsx        # API 金鑰管理、輸出路徑命名模板與 Mock 模式設定
+            ├── DeepSeekBalancePanel.tsx # DeepSeek API 帳戶即時餘額微件
+            ├── TextToImagePage.tsx      # 獨立文生圖工作室（參考圖上傳、畫幅選擇與本地畫廊燈箱）
+            ├── VideoTrimmer.tsx         # 影片修剪與 FPS 抽幀整合對話視窗
+            ├── video/                   # 影片播放器 hooks、FilmstripTimeline 與 VideoPreview
+            └── workflow/                # @xyflow/react 即時管線畫布與 6 種動態節點元件
+```
